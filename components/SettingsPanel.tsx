@@ -22,6 +22,8 @@ interface TradeConfig {
   ambiente: 'AO VIVO' | 'REPLAY HISTÓRICO';
   horario_inicio: string;
   horario_fim: string;
+  data_replay_inicio?: string;
+  data_replay_fim?: string;
 }
 
 export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanelProps) {
@@ -37,6 +39,8 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
     ambiente: 'AO VIVO',
     horario_inicio: '09:00',
     horario_fim: '17:30',
+    data_replay_inicio: new Date().toISOString().split('T')[0],
+    data_replay_fim: new Date().toISOString().split('T')[0],
   });
 
   // Carregar configurações iniciais (se existirem)
@@ -134,6 +138,30 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
               </button>
             </div>
           </div>
+
+          {/* Datas do Replay (Só aparece se for Replay) */}
+          {config.ambiente === 'REPLAY HISTÓRICO' && (
+            <div className="grid grid-cols-2 gap-4 p-3 bg-purple-500/10 border border-purple-500/20 rounded-md">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-purple-300">Data Início (Replay)</label>
+                <input 
+                  type="date" 
+                  value={config.data_replay_inicio}
+                  onChange={(e) => setConfig({...config, data_replay_inicio: e.target.value})}
+                  className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-purple-300">Data Fim (Replay)</label>
+                <input 
+                  type="date" 
+                  value={config.data_replay_fim}
+                  onChange={(e) => setConfig({...config, data_replay_fim: e.target.value})}
+                  className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Ativo */}
           <div className="space-y-2">
