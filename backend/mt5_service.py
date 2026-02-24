@@ -116,3 +116,22 @@ class MT5Service:
             
         print(f"Ordem executada com sucesso! Ticket: {result.order}")
         return result
+        
+    def simular_ordem_paper_trading(self, ativo: str, tipo_ordem: str, preco_simulado: float, motivo: str):
+        """
+        Simula a execução de uma ordem no banco de dados sem enviar para a corretora real.
+        Evita o Erro 10027 (Mercado Fechado / Algo Trading disabled).
+        """
+        import time
+        import random
+        
+        ticket_simulado = int(time.time()) + random.randint(100, 999)
+        print(f"[PAPER TRADING] Ordem {tipo_ordem} simulada com sucesso para {ativo} a R${preco_simulado:.2f}. Ticket: {ticket_simulado}")
+        
+        # Simula o retorno do MT5
+        class MockResult:
+            def __init__(self, order, price):
+                self.order = order
+                self.price = price
+                
+        return MockResult(order=ticket_simulado, price=preco_simulado)
