@@ -71,30 +71,38 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
   const handleSave = async () => {
     setIsLoading(true);
     try {
+      // Removemos o 'id' do objeto que vai pro banco para evitar conflitos. 
+      // O banco vai usar o 'profile_id' como chave principal de busca.
+      const { id, ...configSemId } = config;
+      
       const configToSave = {
-        ...config,
+        ...configSemId,
+        profile_id: userId,
         updated_at: new Date().toISOString(),
       };
 
-      let error;
-      if (config.id) {
-        const { error: updateError } = await supabase
-          .from('trade_configs')
-          .update(configToSave)
-          .eq('id', config.id);
-        error = updateError;
-      } else {
-        const { error: insertError } = await supabase
-          .from('trade_configs')
-          .insert([configToSave]);
-        error = insertError;
-      }
+      // O UPSERT mágico: Se existir o profile_id, ele ATUALIZA. Se não existir, ele CRIA.
+      const { error: upsertError } = await supabase
+        .from('trade_configs')
+        .upsert(configToSave, { onConflict: 'profile_id' });
 
-      if (error) {
-        console.error('Erro ao salvar configurações:', error);
-        alert('Erro ao salvar configurações. Verifique o console.');
+      if (upsertError) {
+        console.error('Erro ao salvar configurações:', upsertError);
+        alert('Erro ao salvar configurações. Verifique o console do navegador.');
       } else {
         alert('Configurações salvas com sucesso!');
+        
+        // Recarrega os dados fresquinhos do banco para garantir sincronia no Frontend
+        const { data } = await supabase
+          .from('trade_configs')
+          .select('*')
+          .eq('profile_id', userId)
+          .single();
+          
+        if (data) {
+          setConfig(data);
+        }
+        
         onClose();
       }
     } catch (error) {
