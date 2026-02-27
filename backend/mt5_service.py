@@ -62,14 +62,16 @@ class MT5Service:
             }
         return None
 
-    def capturar_imagem_grafico(self, df_m5, symbol, filename="chart_m5.png"):
-        """Gera uma foto (plot) do gráfico de M5 para a IA 'enxergar'."""
-        if df_m5 is None or df_m5.empty: 
+    def capturar_imagem_grafico(self, df_dados, symbol, filename="chart.png", titulo_grafico="M5"):
+        """Gera uma foto (plot) do gráfico para a IA 'enxergar'."""
+        if df_dados is None or df_dados.empty: 
             return None
         
         try:
             import mplfinance as mpf
-            df_plot = df_m5.copy()
+            import pandas as pd # Garantindo que o pandas está disponível para converter a data
+            
+            df_plot = df_dados.copy()
             
             # Formata a data para a biblioteca de desenho entender
             if 'time' in df_plot.columns:
@@ -79,13 +81,12 @@ class MT5Service:
             # Renomeia as colunas para o padrão exigido
             df_plot.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'tick_volume': 'Volume'}, inplace=True)
             
-            # Pega os últimos 45 candles (A "foto" ideal)
-            df_plot = df_plot.tail(45) 
+            # Pega os últimos 60 candles (A "foto" ideal panorâmica para a IA)
+            df_plot = df_plot.tail(60) 
             
-            # --- CORREÇÃO CIRÚRGICA: ESTILO DARK MODE ---
+            # --- ESTILO DARK MODE ---
             mc = mpf.make_marketcolors(up='#10b981', down='#ef4444', edge='inherit', wick='inherit', volume='in', ohlc='i')
             
-            # Parâmetros de texto repassados da forma correta para o matplotlib (rc)
             estilo_rc = {
                 'text.color': 'white', 
                 'axes.labelcolor': 'white', 
@@ -103,8 +104,18 @@ class MT5Service:
                 rc=estilo_rc
             )
             
-            # Gera e salva a imagem
-            mpf.plot(df_plot, type='candle', style=s, volume=True, title=f"VISÃO IA - {symbol} M5", savefig=filename, figsize=(10, 6))
+            # --- GERAÇÃO DA IMAGEM COM MÉDIAS MÓVEIS DE ALTO CONTRASTE ---
+            mpf.plot(
+                df_plot, 
+                type='candle', 
+                style=s, 
+                volume=True,
+                mav=(9, 21),                       # Adiciona Média Móvel Rápida (9) e Lenta (21)
+                mavcolors=('#FFFF00', '#00BFFF'),  # Amarelo (#FFFF00) e Azul Claro (#00BFFF)
+                title=f"VISÃO IA - {symbol} {titulo_grafico}", 
+                savefig=filename, 
+                figsize=(10, 6)
+            )
             
             return filename
             

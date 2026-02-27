@@ -7,6 +7,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import MetaTrader5 as mt5
+import pandas as pd
 
 from mt5_service import MT5Service
 from ai_service import AITrader
@@ -17,10 +18,9 @@ def capturar_dados_triplos(symbol):
     # Aumentamos para 100 candles de M1 para ver micro-tendências e exaustão
     rates_m1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 100)
     rates_m2 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M2, 0, 50)
-    rates_m5 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 20)
+    rates_m5 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 60) # Aumentado para 60 para a IA ter o histórico correto na foto
     rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 15)
 
-    import pandas as pd
     return {
         "m1": pd.DataFrame(rates_m1) if rates_m1 is not None else None,
         "m2": pd.DataFrame(rates_m2) if rates_m2 is not None else None,
@@ -86,7 +86,7 @@ async def trading_loop():
     print("Iniciando Trading Loop (Motor Executor Híbrido)...")
     
     if not mt5_service.conectar():
-        print("❌ ERRO CRÍTICO: Verifique se o MT5 da Genial está aberto e se o .env está correto.")
+        print("❌ ERRO CRÍTICO: Verifique se o MT5 da Genial/Corretora está aberto e se o .env está correto.")
         return
 
     while True:
@@ -103,9 +103,13 @@ async def trading_loop():
                 profile_id = config.get('profile_id')
                 ativo_banco = config.get('ativo', 'BITG26')
                 
+                # --- A BALA DE PRATA: CRIA A VARIÁVEL QUE FALTAVA ---
+                ativo = ativo_banco
+                symbol = ativo_banco 
+                
                 # --- FORÇA A SINCRONIZAÇÃO COM O FRONTEND ---
                 import main
-                main.current_symbol = ativo_banco 
+                main.current_symbol = ativo 
                 
                 # VARIÁVEIS DE EXECUÇÃO ORIGINAIS
                 lote = float(config.get('lote', 1.0))
@@ -114,6 +118,7 @@ async def trading_loop():
                 estrategia = config.get('estrategia_ativa', 'Adaptável (Camaleão / Dinâmica)')
                 horario_inicio = config.get('horario_inicio', '09:00')
                 horario_fim = config.get('horario_fim', '17:30')
+                ambiente = config.get('ambiente', 'AO VIVO')
 
                 # --- NOVAS VARIÁVEIS DE INTELIGÊNCIA IA ---
                 trailing_stop_auto = config.get('trailing_stop_auto', True)
@@ -127,11 +132,11 @@ async def trading_loop():
                 resultado_atual = mt5_service.obter_resultado_diario()
                 
                 if resultado_atual >= meta_diaria:
-                    print(f"[{ativo_banco}] META ALCANÇADA: R$ {resultado_atual:.2f}. Hibernando.")
+                    print(f"[{ativo}] META ALCANÇADA: R$ {resultado_atual:.2f}. Hibernando.")
                     continue
                 
                 if resultado_atual <= limite_perda:
-                    print(f"[{ativo_banco}] LIMITE DE PERDA ATINGIDO: R$ {resultado_atual:.2f}. Travado.")
+                    print(f"[{ativo}] LIMITE DE PERDA ATINGIDO: R$ {resultado_atual:.2f}. Travado.")
                     continue
 
                 # 2. Verificar Filtro de Horário
@@ -147,11 +152,11 @@ async def trading_loop():
                     dentro_horario = True
 
                 if not dentro_horario:
-                    print(f"[{ativo_banco}] Fora da janela operacional ({horario_inicio} às {horario_fim}).")
+                    print(f"[{ativo}] Fora da janela operacional ({horario_inicio} às {horario_fim}).")
                     continue
 
                 # 3. Puxar dados do MT5 (Fractal M1, M5, M15 + Ontem)
-                pacote_dados = capturar_dados_triplos(ativo_banco)
+                pacote_dados = capturar_dados_triplos(ativo)
 
                 if pacote_dados["m1"] is None or pacote_dados["m1"].empty:
                     continue
@@ -160,11 +165,12 @@ async def trading_loop():
                 preco_atual_log = float(df_micro.iloc[-1]['close']) # Tick atual (Vivo)
                 preco_fechamento_anterior = float(df_micro.iloc[-2]['close']) # Fechamento da última vela
                 preco_abertura_anterior = float(df_micro.iloc[-2]['open']) # Abertura da última vela (Para saber a cor)
+                timestamp_atual = int(df_micro.iloc[-1]['time'].timestamp() if hasattr(df_micro.iloc[-1]['time'], 'timestamp') else df_micro.iloc[-1]['time'])
 
-                # --- PROTEÇÃO DINÂMICA CONTRA ERRO 10016 (MOVIDO PARA CIMA) ---
+                # --- PROTEÇÃO DINÂMICA CONTRA ERRO 10016 ---
                 sl_real = sl_pts
                 tp_real = tp_pts
-                if 'BIT' in ativo_banco.upper():
+                if 'BIT' in ativo.upper():
                     sl_real = max(sl_pts, 1500) 
                     tp_real = max(tp_pts, 3000)
 
@@ -172,44 +178,41 @@ async def trading_loop():
                 # MÓDULO EXECUTOR (LATÊNCIA ZERO): EXECUÇÃO DE ARMADILHA
                 # ======================================================================
                 armadilha = memoria_ordem_programada.get(profile_id, {"acao": "NONE"})
-                ambiente = config.get('ambiente', 'AO VIVO')
                 
-                if armadilha.get("acao") in ["BUY", "SELL"] and not mt5_service.tem_posicao_aberta(ativo_banco):
+                if armadilha.get("acao") in ["BUY", "SELL"] and not mt5_service.tem_posicao_aberta(ativo):
                     # Checagem de Timeout (15 minutos de validade)
                     timestamp_armadilha = armadilha.get("timestamp", time_lib.time())
                     idade_armadilha = time_lib.time() - timestamp_armadilha
                     
                     if idade_armadilha > 900: # 900 segundos = 15 minutos
-                        print(f"[{ativo_banco}] ⏰ Armadilha de {armadilha['acao']} expirou (Timeout > 15m). Desarmando.")
+                        print(f"[{ativo}] ⏰ Armadilha de {armadilha['acao']} expirou (Timeout > 15m). Desarmando.")
                         memoria_ordem_programada[profile_id] = {"acao": "NONE"}
                     else:
                         acao_armada = armadilha["acao"]
                         gatilho = float(armadilha.get("preco_gatilho", 0))
                         
-                        print(f"[{ativo_banco}] Monitorando Armadilha {acao_armada} no gatilho {gatilho}. Fechamento Anterior: {preco_fechamento_anterior}")
+                        print(f"[{ativo}] Monitorando Armadilha {acao_armada} no gatilho {gatilho}. Fechamento Anterior: {preco_fechamento_anterior}")
                         
                         # Checa a Autenticação em 2 Fatores (Rompimento Confirmado)
                         ordem_disparada = False
                         
                         if acao_armada == "BUY":
                             # 1. Fechou acima do gatilho? | 2. Vela de força (Verde: Fechamento > Abertura)?
-                            if (preco_fechamento_anterior > gatilho and 
-                                preco_fechamento_anterior > preco_abertura_anterior):
+                            if (preco_fechamento_anterior > gatilho and preco_fechamento_anterior > preco_abertura_anterior):
                                 print(f"🔥 ARMADILHA CONFIRMADA: Rompimento real de {gatilho} com força compradora sustentada. BUY!")
                                 ordem_disparada = True
                                 
                         elif acao_armada == "SELL":
                             # 1. Fechou abaixo do gatilho? | 2. Vela de força (Vermelha: Fechamento < Abertura)?
-                            if (preco_fechamento_anterior < gatilho and 
-                                preco_fechamento_anterior < preco_abertura_anterior):
+                            if (preco_fechamento_anterior < gatilho and preco_fechamento_anterior < preco_abertura_anterior):
                                 print(f"🔥 ARMADILHA CONFIRMADA: Rompimento real de {gatilho} com força vendedora sustentada. SELL!")
                                 ordem_disparada = True
 
                     if ordem_disparada:
                         if ambiente == 'REPLAY HISTÓRICO':
-                            resultado = mt5_service.simular_ordem_paper_trading(ativo_banco, acao_armada, preco_atual_log, armadilha.get("motivo_gatilho", "Rompimento"))
+                            resultado = mt5_service.simular_ordem_paper_trading(ativo, acao_armada, preco_atual_log, armadilha.get("motivo_gatilho", "Rompimento"))
                         else:
-                            resultado = mt5_service.enviar_ordem(ativo_banco, acao_armada, lote, sl_real, tp_real)
+                            resultado = mt5_service.enviar_ordem(ativo, acao_armada, lote, sl_real, tp_real)
                         
                         # Limpa a armadilha após atirar para não atirar duplicado
                         memoria_ordem_programada[profile_id] = {"acao": "NONE"}
@@ -218,7 +221,7 @@ async def trading_loop():
                             await broadcast_to_frontend({
                                 "type": "trade",
                                 "marker": {
-                                    "time": int(df_micro.iloc[-1]['time']),
+                                    "time": timestamp_atual,
                                     "position": 'belowBar' if acao_armada == 'BUY' else 'aboveBar',
                                     "color": '#10b981' if acao_armada == 'BUY' else '#ef4444',
                                     "shape": 'arrowUp' if acao_armada == 'BUY' else 'arrowDown',
@@ -228,15 +231,15 @@ async def trading_loop():
                         continue # Pula o resto do loop para não sobrecarregar a IA após atirar
 
                 # 2.5 Verificar se já estamos posicionados (Trava Sniper)
-                if ambiente != 'REPLAY HISTÓRICO' and mt5_service.tem_posicao_aberta(ativo_banco):
-                    print(f"[{ativo_banco}] Posicionado. Monitorando Trailing Stop...")
+                if ambiente != 'REPLAY HISTÓRICO' and mt5_service.tem_posicao_aberta(ativo):
+                    print(f"[{ativo}] Posicionado. Monitorando Trailing Stop...")
                     await asyncio.sleep(10)
                     continue
 
                 # ======================================================================
                 # MÓDULO ANALISTA (IA): LEITURA DE FOTOS A CADA 5 MINUTOS
                 # ======================================================================
-                dados_ontem = mt5_service.obter_ohlc_ontem(ativo_banco) or {}
+                dados_ontem = mt5_service.obter_ohlc_ontem(ativo) or {}
                 relevancia_anterior = memoria_relevancia.get(profile_id, 1)
                 estado_anterior_ia = memoria_estado_ia.get(profile_id, "Iniciando...")
                 
@@ -247,8 +250,9 @@ async def trading_loop():
                 caminho_foto_m5, caminho_foto_m1 = None, None
                 if enviar_fotos:
                     print(f"📸 Ciclo de 5 Minutos. Gerando imagens visuais para a IA...")
-                    caminho_foto_m5 = mt5_service.capturar_imagem_grafico(df_m5=pacote_dados["m5"], symbol=ativo_banco, filename="chart_m5.png")
-                    caminho_foto_m1 = mt5_service.capturar_imagem_grafico(df_m5=pacote_dados["m1"], symbol=ativo_banco, filename="chart_m1.png")
+                    # Correção: Passando os argumentos posicionais corretamente
+                    caminho_foto_m5 = mt5_service.capturar_imagem_grafico(pacote_dados["m5"], ativo, "chart_m5.png", "M5")
+                    caminho_foto_m1 = mt5_service.capturar_imagem_grafico(pacote_dados["m1"], ativo, "chart_m1.png", "M1")
                 else:
                     print(f"⚡ Ciclo Rápido. IA lendo apenas dados de texto...")
 
@@ -274,14 +278,6 @@ async def trading_loop():
 
                 # Armazena nova armadilha que a IA definir
                 nova_armadilha = analise.get('ordem_programada', {"acao": "NONE"})
-                
-                # --- TRAVA ANTI-ALUCINAÇÃO (GATILHO INVERTIDO) ---
-                if nova_armadilha.get("acao") == "BUY" and float(nova_armadilha.get("preco_gatilho", 0)) <= preco_atual_log:
-                    print(f"⚠️ Alucinação da IA Bloqueada: Tentou armar BUY em {nova_armadilha.get('preco_gatilho')} com o preço já acima em {preco_atual_log}.")
-                    nova_armadilha = {"acao": "NONE"}
-                elif nova_armadilha.get("acao") == "SELL" and float(nova_armadilha.get("preco_gatilho", 0)) >= preco_atual_log:
-                    print(f"⚠️ Alucinação da IA Bloqueada: Tentou armar SELL em {nova_armadilha.get('preco_gatilho')} com o preço já abaixo em {preco_atual_log}.")
-                    nova_armadilha = {"acao": "NONE"}
 
                 # Salva o Timestamp para o Timeout apenas se a armadilha for válida
                 if nova_armadilha.get("acao") != "NONE":
@@ -291,7 +287,7 @@ async def trading_loop():
 
                 decisao = analise.get('decisao', 'WAIT')
                 motivo = analise.get('motivo', 'Sem motivo')
-                estrategia_escolhida = analise.get('estrategia_escolhida', estrategia) # <-- LINHA NOVA
+                estrategia_escolhida = analise.get('estrategia_escolhida', estrategia)
 
                 print(f"IA [{nova_relevancia}★] [Preço: {preco_atual_log}] [Delay: {tempo_ia:.2f}s]: {decisao} | {motivo}")
                 if nova_armadilha.get("acao") != "NONE":
@@ -304,34 +300,37 @@ async def trading_loop():
 
                     if agressividade == 'SNIPER' and nova_relevancia < 5:
                         print(f"Sinal {decisao} rejeitado (Filtro SNIPER).")
-                        continue
                     elif agressividade == 'SCALPER' and nova_relevancia < 4:
                         print(f"Sinal {decisao} rejeitado (Filtro SCALPER).")
-                        continue
-
-                    if ambiente == 'REPLAY HISTÓRICO':
-                        resultado = mt5_service.simular_ordem_paper_trading(ativo_banco, decisao, preco_atual_log, motivo)
                     else:
-                        resultado = mt5_service.enviar_ordem(ativo_banco, decisao, lote, sl_real, tp_real)
-                    
-                    if resultado:
-                        tag = "[SIMULAÇÃO] " if ambiente == 'REPLAY HISTÓRICO' else ""
-                        await log_to_supabase(profile_id, "trade", f"{tag}Ordem {decisao} via {estrategia_escolhida}")
-                        await save_trade_history(profile_id, resultado.order, ativo_banco, decisao, resultado.price, motivo)
+                        # Executa de fato
+                        if ambiente == 'REPLAY HISTÓRICO':
+                            print(f"[MODO REPLAY] Simulando ordem {decisao} para {ativo} (Paper Trading)...")
+                            resultado = mt5_service.simular_ordem_paper_trading(ativo, decisao, preco_atual_log, motivo)
+                        else:
+                            print(f"[MODO AO VIVO] Executando ordem REAL {decisao} para {ativo}...")
+                            resultado = mt5_service.enviar_ordem(ativo, decisao, lote, sl_real, tp_real)
                         
-                        await broadcast_to_frontend({
-                            "type": "trade",
-                            "marker": {
-                                "time": int(df_micro.iloc[-1]['time']),
-                                "position": 'belowBar' if decisao == 'BUY' else 'aboveBar',
-                                "color": '#10b981' if decisao == 'BUY' else '#ef4444',
-                                "shape": 'arrowUp' if decisao == 'BUY' else 'arrowDown',
-                                "text": f"{decisao} {nova_relevancia}★"
-                            }
-                        })
+                        if resultado:
+                            tag = "[SIMULAÇÃO] " if ambiente == 'REPLAY HISTÓRICO' else ""
+                            await log_to_supabase(profile_id, "trade", f"{tag}Ordem {decisao} via {estrategia_escolhida}")
+                            await save_trade_history(profile_id, resultado.order, ativo, decisao, resultado.price, motivo)
+                            
+                            await broadcast_to_frontend({
+                                "type": "trade",
+                                "marker": {
+                                    "time": timestamp_atual,
+                                    "position": 'belowBar' if decisao == 'BUY' else 'aboveBar',
+                                    "color": '#10b981' if decisao == 'BUY' else '#ef4444',
+                                    "shape": 'arrowUp' if decisao == 'BUY' else 'arrowDown',
+                                    "text": f"{decisao} {nova_relevancia}★"
+                                }
+                            })
+                        else:
+                            await log_to_supabase(profile_id, "error", f"Falha ao executar ordem {decisao} para {ativo}.")
 
                 # Broadcast para painel
-                log_msg = f"Relevância: {nova_relevancia}★ | Ativo: {ativo_banco} | Decisão: {decisao}\nMotivo: {motivo}\nLatência: {tempo_ia:.2f}s"
+                log_msg = f"Relevância: {nova_relevancia}★ | Ativo: {ativo} | Decisão: {decisao}\nMotivo: {motivo}\nLatência: {tempo_ia:.2f}s"
                 await broadcast_to_frontend({
                     "id": str(datetime.now().timestamp()),
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
@@ -341,28 +340,8 @@ async def trading_loop():
                     "relevancia": nova_relevancia
                 })
 
-            # Loop a cada 15 segundos para pegar o fechamento com precisão
+            # Aguarda o próximo ciclo (15 segundos é ideal para micro-tendências)
             await asyncio.sleep(15)
-                    ambiente = config.get('ambiente', 'AO VIVO')
-                    
-                    if ambiente == 'REPLAY HISTÓRICO':
-                        print(f"[MODO REPLAY] Simulando ordem {decisao} para {ativo} (Paper Trading)...")
-                        # Pega o último preço do dataframe micro para simular
-                        preco_atual = float(df_micro.iloc[-1]['close'])
-                        resultado = mt5_service.simular_ordem_paper_trading(ativo, decisao, preco_atual, motivo)
-                    else:
-                        print(f"[MODO AO VIVO] Executando ordem REAL {decisao} para {ativo}...")
-                        resultado = mt5_service.enviar_ordem(ativo, decisao, lote, sl_pts, tp_pts)
-                    
-                    if resultado:
-                        tag = "[SIMULAÇÃO] " if ambiente == 'REPLAY HISTÓRICO' else ""
-                        await log_to_supabase(profile_id, "trade", f"{tag}Ordem {decisao} executada com sucesso. Ticket: {resultado.order}")
-                        await save_trade_history(profile_id, resultado.order, ativo, decisao, resultado.price, motivo)
-                    else:
-                        await log_to_supabase(profile_id, "error", f"Falha ao executar ordem {decisao} para {ativo}.")
-                        
-            # Aguarda o próximo ciclo (ex: 1 minuto)
-            await asyncio.sleep(60)
 
         except Exception as e:
             print(f"Erro no loop principal: {e}")
@@ -411,7 +390,7 @@ if __name__ == "__main__":
         await asyncio.gather(
             trading_loop(),
             atualizar_grafico_full(), 
-            monitor_tick_data()       
+            monitor_tick_data()        
         )
 
     try:
