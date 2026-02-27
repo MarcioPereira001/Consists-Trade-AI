@@ -53,7 +53,7 @@ const generateB3Symbols = () => {
   const wdoYear = activeWdoIdx < currentMonthIdx ? year + 1 : year;
   const nextWdoYear = nextWdoIdx < activeWdoIdx ? year + 1 : year;
 
-  // Índice (Vence meses pares. Rola perto do dia 15)
+  // Índice (Vence meses pares. Acontece perto do dia 15)
   const winMap = ['G', 'G', 'J', 'J', 'M', 'M', 'Q', 'Q', 'V', 'V', 'Z', 'Z'];
   let activeWinLetter = winMap[month - 1];
   let winYear = year;

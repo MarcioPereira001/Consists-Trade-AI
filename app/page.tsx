@@ -39,7 +39,7 @@ export default function CockpitPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Estados Dinâmicos do Gráfico
+  // Estados Dinâmicos do Gráfico Financeiro
   const [visualStudies, setVisualStudies] = useState<VisualStudies | undefined>(undefined);
   const [chartData, setChartData] = useState<CandlestickData<Time>[]>([]);
   const [chartMarkers, setChartMarkers] = useState<SeriesMarker<Time>[]>([]);
