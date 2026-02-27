@@ -123,54 +123,61 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
 
   const handleSave = async () => {
     setIsLoading(true);
+    
     try {
+      // 1. Tenta salvar normalmente (Update)
       const { id, ...configSemId } = config;
       const { error } = await supabase
         .from('trade_configs')
-        .upsert({ ...configSemId, profile_id: userId, updated_at: new Date().toISOString() }, { onConflict: 'profile_id' });
+        .upsert(
+          { ...configSemId, profile_id: userId, updated_at: new Date().toISOString() }, 
+          { onConflict: 'profile_id' }
+        );
 
       if (error) throw error;
-      alert('Sincronização com o Cérebro IA Concluída!');
-      onClose();
-    } catch (err) {
-      console.error('Erro ao salvar:', err);
-      alert('Erro crítico na sincronização.');
-      // Removemos o 'id' do objeto que vai pro banco para evitar conflitos. 
-      // O banco vai usar o 'profile_id' como chave principal de busca.
-      const { id, ...configSemId } = config;
       
-      const configToSave = {
-        ...configSemId,
-        profile_id: userId,
-        updated_at: new Date().toISOString(),
-      };
-
-      // O UPSERT mágico: Se existir o profile_id, ele ATUALIZA. Se não existir, ele CRIA.
-      const { error: upsertError } = await supabase
+      alert('Sincronização com o Cérebro IA Concluída!');
+      
+      // Recarrega os dados fresquinhos do banco
+      const { data: updatedData } = await supabase
         .from('trade_configs')
-        .upsert(configToSave, { onConflict: 'profile_id' });
-
-      if (upsertError) {
-        console.error('Erro ao salvar configurações:', upsertError);
-        alert('Erro ao salvar configurações. Verifique o console do navegador.');
-      } else {
-        alert('Configurações salvas com sucesso!');
-        
-        // Recarrega os dados fresquinhos do banco para garantir sincronia no Frontend
-        const { data } = await supabase
-          .from('trade_configs')
-          .select('*')
-          .eq('profile_id', userId)
-          .single();
+        .select('*')
+        .eq('profile_id', userId)
+        .single();
           
-        if (data) {
-          setConfig(data);
+      if (updatedData) {
+        setConfig(updatedData);
+      }
+      
+      onClose();
+
+    } catch (err) {
+      // 2. Se der erro, tenta o plano B (Força o Upsert limpando o ID)
+      console.warn('Tentativa primária falhou, tentando fallback (Upsert):', err);
+      
+      try {
+        const { id, ...configSemId } = config;
+        const configToSave = {
+          ...configSemId,
+          profile_id: userId,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error: upsertError } = await supabase
+          .from('trade_configs')
+          .upsert(configToSave, { onConflict: 'profile_id' });
+
+        if (upsertError) {
+          console.error('Erro crítico ao salvar configurações:', upsertError);
+          alert('Erro ao salvar configurações. Verifique o console.');
+        } else {
+          alert('Configurações salvas com sucesso no modo de segurança!');
+          onClose();
         }
-        
-        onClose();
-        
-    } catch (error) {
-      console.error('Erro inesperado ao salvar:', error);
+      } catch (fallbackError) {
+        console.error('Erro inesperado no Fallback:', fallbackError);
+      }
+      
     } finally {
       setIsLoading(false);
     }
