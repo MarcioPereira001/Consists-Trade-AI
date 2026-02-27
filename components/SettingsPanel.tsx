@@ -168,7 +168,7 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
         }
         
         onClose();
-      }
+        
     } catch (error) {
       console.error('Erro inesperado ao salvar:', error);
     } finally {
