@@ -135,6 +135,42 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
     } catch (err) {
       console.error('Erro ao salvar:', err);
       alert('Erro crítico na sincronização.');
+      // Removemos o 'id' do objeto que vai pro banco para evitar conflitos. 
+      // O banco vai usar o 'profile_id' como chave principal de busca.
+      const { id, ...configSemId } = config;
+      
+      const configToSave = {
+        ...configSemId,
+        profile_id: userId,
+        updated_at: new Date().toISOString(),
+      };
+
+      // O UPSERT mágico: Se existir o profile_id, ele ATUALIZA. Se não existir, ele CRIA.
+      const { error: upsertError } = await supabase
+        .from('trade_configs')
+        .upsert(configToSave, { onConflict: 'profile_id' });
+
+      if (upsertError) {
+        console.error('Erro ao salvar configurações:', upsertError);
+        alert('Erro ao salvar configurações. Verifique o console do navegador.');
+      } else {
+        alert('Configurações salvas com sucesso!');
+        
+        // Recarrega os dados fresquinhos do banco para garantir sincronia no Frontend
+        const { data } = await supabase
+          .from('trade_configs')
+          .select('*')
+          .eq('profile_id', userId)
+          .single();
+          
+        if (data) {
+          setConfig(data);
+        }
+        
+        onClose();
+      }
+    } catch (error) {
+      console.error('Erro inesperado ao salvar:', error);
     } finally {
       setIsLoading(false);
     }
@@ -174,6 +210,82 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
               </button>
             </div>
 
+          {/* Datas do Replay (Só aparece se for Replay) */}
+          {config.ambiente === 'REPLAY HISTÓRICO' && (
+            <div className="grid grid-cols-2 gap-4 p-3 bg-purple-500/10 border border-purple-500/20 rounded-md">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-purple-300">Data Início (Replay)</label>
+                <input 
+                  type="date" 
+                  value={config.data_replay_inicio}
+                  onChange={(e) => setConfig({...config, data_replay_inicio: e.target.value})}
+                  className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-purple-300">Data Fim (Replay)</label>
+                <input 
+                  type="date" 
+                  value={config.data_replay_fim}
+                  onChange={(e) => setConfig({...config, data_replay_fim: e.target.value})}
+                  className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Ativo */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300">Ativo Operacional</label>
+            <select 
+              value={config.ativo}
+              onChange={(e) => setConfig({...config, ativo: e.target.value})}
+              className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+            >
+              <optgroup label="Forex Majors">
+                <option value="EURUSD">EURUSD</option>
+                <option value="GBPUSD">GBPUSD</option>
+                <option value="USDJPY">USDJPY</option>
+                <option value="USDCHF">USDCHF</option>
+                <option value="AUDUSD">AUDUSD</option>
+                <option value="USDCAD">USDCAD</option>
+              </optgroup>
+              <optgroup label="Índices Globais">
+                <option value="SP500">SP500 (S&P 500)</option>
+                <option value="US30">US30 (Dow Jones)</option>
+                <option value="NAS100">NAS100 (Nasdaq)</option>
+                <option value="GER40">GER40 (DAX)</option>
+              </optgroup>
+              <optgroup label="Commodities">
+                <option value="XAUUSD">XAUUSD (Ouro)</option>
+                <option value="XAGUSD">XAGUSD (Prata)</option>
+                <option value="USOIL">USOIL (Petróleo WTI)</option>
+              </optgroup>
+              <optgroup label="Criptomoedas">
+                <option value="BTCUSD">BTCUSD (Bitcoin)</option>
+                <option value="ETHUSD">ETHUSD (Ethereum)</option>
+              </optgroup>
+              <optgroup label="B3 (Brasil)">
+                <option value="WINJ26">WINJ26 (Mini Índice)</option>
+                <option value="WDOJ26">WDOJ26 (Mini Dólar)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          {/* Lote */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300">Tamanho do Lote</label>
+            <input 
+              type="number" 
+              step="0.01"
+              value={Number.isNaN(config.lote) ? '' : config.lote}
+              onChange={(e) => setConfig({...config, lote: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+              className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+            />
+          </div>
+
+          {/* Stop Loss & Take Profit */}
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase">Ativo para Análise</label>
               <select 

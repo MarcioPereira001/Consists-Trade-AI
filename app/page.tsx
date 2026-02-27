@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Wifi, WifiOff, BrainCircuit, Terminal, Server, Settings, AlertTriangle, PauseCircle, PlayCircle, LogOut, FastForward } from 'lucide-react';
+import { Activity, Wifi, WifiOff, BrainCircuit, Terminal, Server, Settings, AlertTriangle, PauseCircle, PlayCircle, LogOut, FastForward, Play, Square } from 'lucide-react';
 import TradingChart, { VisualStudies } from '@/components/TradingChart';
 import { CandlestickData, Time, SeriesMarker } from 'lightweight-charts';
 import { useTradeStore } from '@/store/useTradeStore';
@@ -27,6 +27,8 @@ export default function CockpitPage() {
   
   const [mt5Status, setMt5Status] = useState<ConnectionStatus>('disconnected');
   const [aiStatus, setAiStatus] = useState<ConnectionStatus>('disconnected');
+  const [engineStatus, setEngineStatus] = useState<'ONLINE' | 'OFFLINE' | 'LOADING'>('OFFLINE');
+  const [isCommanding, setIsCommanding] = useState(false);
   const [tradeMode, setTradeMode] = useState<TradeMode>('DEMO');
   const [isRobotPaused, setIsRobotPaused] = useState(false);
   
@@ -64,6 +66,25 @@ export default function CockpitPage() {
 
     return () => subscription.unsubscribe();
   }, [router]);
+
+  // Sincronização do Status do Motor AWS
+  useEffect(() => {
+    const fetchEngineStatus = async () => {
+      const { data } = await supabase.from('bot_control').select('status').eq('id', 1).single();
+      if (data) setEngineStatus(data.status as any);
+    };
+    const interval = setInterval(fetchEngineStatus, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const sendEngineCommand = async (cmd: 'START' | 'STOP') => {
+    setIsCommanding(true);
+    await supabase.from('bot_control').update({ 
+      command: cmd, 
+      last_updated: new Date().toISOString() 
+    }).eq('id', 1);
+    setTimeout(() => setIsCommanding(false), 2000);
+  };
 
   // Busca o ativo configurado no Supabase para colocar no topo do gráfico
   const carregarAtivoInicial = async (userId: string) => {
@@ -335,9 +356,33 @@ export default function CockpitPage() {
         </section>
 
         <aside className="w-96 flex flex-col bg-[#0f0f0f]">
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-[#141414] border-b border-[#27272a]">
-            <Terminal className="w-4 h-4 text-gray-400" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Terminal IA</h2>
+          <div className="flex items-center justify-between px-4 py-2.5 bg-[#141414] border-b border-[#27272a]">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-gray-400" />
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Terminal IA</h2>
+            </div>
+            
+            <div className="flex gap-2">
+              {engineStatus === 'ONLINE' ? (
+                <button 
+                  onClick={() => sendEngineCommand('STOP')}
+                  disabled={isCommanding}
+                  className="p-1 bg-red-500/20 hover:bg-red-500/40 text-red-500 rounded border border-red-500/50 transition-all disabled:opacity-30"
+                  title="Parar Motor Central AWS"
+                >
+                  <PauseCircle className="w-4 h-4 fill-current" />
+                </button>
+              ) : (
+                <button 
+                  onClick={() => sendEngineCommand('START')}
+                  disabled={isCommanding}
+                  className="p-1 bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-500 rounded border border-emerald-500/50 transition-all disabled:opacity-30"
+                  title="Ligar Motor Central AWS"
+                >
+                  <PlayCircle className="w-4 h-4 fill-current" />
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-3">
             {aiLogs.length === 0 ? (

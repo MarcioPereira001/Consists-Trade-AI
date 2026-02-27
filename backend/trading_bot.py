@@ -301,6 +301,7 @@ async def trading_loop():
 
                 # 5. EXECUTAR ORDEM IMEDIATA SE A IA MANDAR A MERCADO
                 if decisao in ['BUY', 'SELL']:
+
                     if agressividade == 'SNIPER' and nova_relevancia < 5:
                         print(f"Sinal {decisao} rejeitado (Filtro SNIPER).")
                         continue
@@ -342,6 +343,26 @@ async def trading_loop():
 
             # Loop a cada 15 segundos para pegar o fechamento com precisão
             await asyncio.sleep(15)
+                    ambiente = config.get('ambiente', 'AO VIVO')
+                    
+                    if ambiente == 'REPLAY HISTÓRICO':
+                        print(f"[MODO REPLAY] Simulando ordem {decisao} para {ativo} (Paper Trading)...")
+                        # Pega o último preço do dataframe micro para simular
+                        preco_atual = float(df_micro.iloc[-1]['close'])
+                        resultado = mt5_service.simular_ordem_paper_trading(ativo, decisao, preco_atual, motivo)
+                    else:
+                        print(f"[MODO AO VIVO] Executando ordem REAL {decisao} para {ativo}...")
+                        resultado = mt5_service.enviar_ordem(ativo, decisao, lote, sl_pts, tp_pts)
+                    
+                    if resultado:
+                        tag = "[SIMULAÇÃO] " if ambiente == 'REPLAY HISTÓRICO' else ""
+                        await log_to_supabase(profile_id, "trade", f"{tag}Ordem {decisao} executada com sucesso. Ticket: {resultado.order}")
+                        await save_trade_history(profile_id, resultado.order, ativo, decisao, resultado.price, motivo)
+                    else:
+                        await log_to_supabase(profile_id, "error", f"Falha ao executar ordem {decisao} para {ativo}.")
+                        
+            # Aguarda o próximo ciclo (ex: 1 minuto)
+            await asyncio.sleep(60)
 
         except Exception as e:
             print(f"Erro no loop principal: {e}")
