@@ -1,16 +1,16 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Wifi, WifiOff, BrainCircuit, Terminal, Server, Settings, AlertTriangle, PauseCircle, PlayCircle, LogOut } from 'lucide-react';
+import { Activity, Wifi, WifiOff, BrainCircuit, Terminal, Server, Settings, AlertTriangle, PauseCircle, PlayCircle, LogOut, FastForward } from 'lucide-react';
 import TradingChart, { VisualStudies } from '@/components/TradingChart';
-import SettingsPanel from '@/components/SettingsPanel';
-import { CandlestickData, Time } from 'lightweight-charts';
+import { CandlestickData, Time, SeriesMarker } from 'lightweight-charts';
 import { useTradeStore } from '@/store/useTradeStore';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Session } from '@supabase/supabase-js';
+import SettingsPanel from '@/components/SettingsPanel';
+import axios from 'axios';
 
-// Tipos base para os estados (preparando para o WebSocket)
 type ConnectionStatus = 'connected' | 'disconnected' | 'connecting';
 type TradeMode = 'DEMO' | 'REAL';
 
@@ -18,20 +18,18 @@ interface LogEntry {
   id: string;
   timestamp: string;
   message: string;
-  type: 'info' | 'warning' | 'error' | 'trade' | 'ai_analysis';
+  type: 'info' | 'warning' | 'error' | 'trade' | 'ai_analysis' | 'market_data';
 }
 
 export default function CockpitPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   
-  // Estados Iniciais (Zero mocks, arrays vazios)
   const [mt5Status, setMt5Status] = useState<ConnectionStatus>('disconnected');
   const [aiStatus, setAiStatus] = useState<ConnectionStatus>('disconnected');
   const [tradeMode, setTradeMode] = useState<TradeMode>('DEMO');
   const [isRobotPaused, setIsRobotPaused] = useState(false);
   
-  // Zustand Store
   const { balance, equity, openPositions, dailyMetrics } = useTradeStore();
   
   const [aiLogs, setAiLogs] = useState<LogEntry[]>([]);
@@ -39,93 +37,146 @@ export default function CockpitPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Estudos Visuais Dinâmicos (Vindos da IA)
+  // Estados Dinâmicos do Gráfico
   const [visualStudies, setVisualStudies] = useState<VisualStudies | undefined>(undefined);
+  const [chartData, setChartData] = useState<CandlestickData<Time>[]>([]);
+  const [chartMarkers, setChartMarkers] = useState<SeriesMarker<Time>[]>([]);
+  const [currentAsset, setCurrentAsset] = useState<string>('CARREGANDO...');
 
   useEffect(() => {
-    // Verifica sessão inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) {
         router.push('/auth');
       } else {
         setSession(session);
+        carregarAtivoInicial(session.user.id);
       }
     });
 
-    // Escuta mudanças de autenticação
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) {
         router.push('/auth');
       } else {
         setSession(session);
+        carregarAtivoInicial(session.user.id);
       }
     });
 
     return () => subscription.unsubscribe();
   }, [router]);
 
+  // Busca o ativo configurado no Supabase para colocar no topo do gráfico
+  const carregarAtivoInicial = async (userId: string) => {
+    const { data } = await supabase.from('trade_configs').select('ativo').eq('profile_id', userId).single();
+    if (data && data.ativo) {
+      setCurrentAsset(data.ativo);
+      // Sincroniza o backend com o ativo carregado
+      syncAssetWithBackend(data.ativo);
+    } else {
+      setCurrentAsset('NENHUM ATIVO');
+    }
+  };
+
+  // Função para sincronizar a troca de ativo com o Backend
+  const syncAssetWithBackend = async (asset: string) => {
+    try {
+      await fetch('http://127.0.0.1:8000/api/select_asset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset: asset }),
+      });
+      console.log("Backend sincronizado com o ativo:", asset);
+    } catch (error) {
+      console.error("Erro ao sincronizar ativo com o backend:", error);
+    }
+  };
+
+  // Monitora mudanças no currentAsset para sincronizar (caso venha de outras partes do app)
   useEffect(() => {
-    // Auto-scroll para o final dos logs
+    if (currentAsset !== 'CARREGANDO...' && currentAsset !== 'NENHUM ATIVO') {
+      syncAssetWithBackend(currentAsset);
+    }
+  }, [currentAsset]);
+
+  useEffect(() => {
     if (logsEndRef.current) {
       logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [aiLogs]);
 
   useEffect(() => {
-    // Inicializa a conexão WebSocket com o backend
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/logs';
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       setBackendStatus('online');
-      setAiStatus('connected'); // Assumindo que o backend gerencia a IA
+      setAiStatus('connected');
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        setAiLogs((prev) => [...prev, data]);
         
-        // Extrai estudos visuais se houver no log da IA
-        if (data.type === 'ai_analysis' && data.estudos_visuais) {
-          setVisualStudies(data.estudos_visuais);
+        // 1. Tratamento de Logs e Análises (Cérebro)
+        if (data.type !== 'market_data') {
+          setAiLogs((prev) => [...prev, data]);
+          if (data.type === 'ai_analysis' && data.estudos_visuais) {
+            setVisualStudies(data.estudos_visuais);
+          }
         }
+        
+        // 2. Tratamento de Dados de Mercado (Olhos - Game Mode)
+        if (data.type === 'market_data') {
+          if (data.candles) {
+            setChartData(data.candles);
+          } 
+          else if (data.tick) {
+            setChartData((prev) => {
+              const lastCandle = prev[prev.length - 1];
+              if (lastCandle) {
+                const updatedCandle = {
+                  ...lastCandle,
+                  close: data.tick.price,
+                  high: Math.max(lastCandle.high, data.tick.price),
+                  low: Math.min(lastCandle.low, data.tick.price),
+                };
+                return [...prev.slice(0, -1), updatedCandle];
+              }
+              return prev;
+            });
+          }
+          setMt5Status('connected');
+        }
+
+        if (data.type === 'trade' && data.marker) {
+          setChartMarkers(prev => [...prev, data.marker]);
+        }
+
       } catch (error) {
-        console.error('Erro ao fazer parse da mensagem do WebSocket:', error);
+        console.error('Erro no processamento de dados em tempo real:', error);
       }
     };
 
     ws.onclose = () => {
       setBackendStatus('offline');
       setAiStatus('disconnected');
+      setMt5Status('disconnected');
     };
 
-    ws.onerror = (error) => {
-      // Evita poluir o console com erros de conexão quando o backend não está rodando localmente
+    ws.onerror = () => {
       if (process.env.NODE_ENV === 'development') {
         console.warn('WebSocket desconectado ou falha na conexão.');
       }
       setBackendStatus('offline');
       setAiStatus('disconnected');
+      setMt5Status('disconnected');
     };
 
-    return () => {
-      ws.close();
-    };
+    return () => ws.close();
   }, []);
-
-  // Mock temporário apenas para validar a renderização visual do gráfico
-  const initialChartData: CandlestickData<Time>[] = [
-    { time: '2026-02-23' as Time, open: 1.0850, high: 1.0865, low: 1.0840, close: 1.0860 },
-    { time: '2026-02-24' as Time, open: 1.0860, high: 1.0880, low: 1.0855, close: 1.0875 },
-    { time: '2026-02-25' as Time, open: 1.0875, high: 1.0890, low: 1.0860, close: 1.0865 },
-  ];
 
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-100 overflow-hidden font-sans">
-      {/* HEADER */}
       <header className="flex items-center justify-between px-4 py-3 bg-[#141414] border-b border-[#27272a] shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
@@ -187,7 +238,6 @@ export default function CockpitPage() {
         </div>
 
         <div className="flex items-center gap-6">
-          {/* Métricas Rápidas */}
           <div className="flex items-center gap-4 mr-4 border-r border-[#27272a] pr-6">
             <div className="flex flex-col">
               <span className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Lucro Líquido</span>
@@ -220,17 +270,30 @@ export default function CockpitPage() {
         </div>
       </header>
 
-      {/* MAIN CONTENT */}
       <main className="flex flex-1 overflow-hidden">
-        {/* CHART AREA */}
         <section className="flex-1 flex flex-col border-r border-[#27272a] bg-[#0a0a0a]">
           <div className="flex items-center justify-between px-4 py-2 bg-[#141414] border-b border-[#27272a]">
             <div className="flex items-center gap-3">
-              <span className="font-bold text-lg">EURUSD</span>
+              <span className="font-bold text-lg text-blue-400">{currentAsset}</span>
               <span className="text-xs px-1.5 py-0.5 bg-[#27272a] rounded text-gray-300">M15</span>
+              
+              {/* REPLAY SPEED CONTROLS */}
+              <div className="flex items-center gap-2 ml-4 px-2 border-l border-[#27272a]">
+                <span className="text-[10px] font-bold text-purple-400 flex items-center gap-1">
+                  <FastForward className="w-3 h-3" /> SPEED:
+                </span>
+                {[1, 2, 4, 10].map((v) => (
+                  <button 
+                    key={v}
+                    onClick={() => axios.post('http://127.0.0.1:8000/api/set_replay_speed', { speed: v })}
+                    className="px-2 py-0.5 text-[10px] bg-[#27272a] hover:bg-purple-500/40 hover:text-white rounded transition-all text-gray-400"
+                  >
+                    {v}x
+                  </button>
+                ))}
+              </div>
             </div>
             
-            {/* Controles Operacionais */}
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => setIsRobotPaused(!isRobotPaused)}
@@ -254,18 +317,23 @@ export default function CockpitPage() {
             </div>
 
             <div className="flex items-center gap-4 text-sm font-mono">
-              <span className="text-gray-400">O: <span className="text-gray-200">0.00000</span></span>
-              <span className="text-gray-400">H: <span className="text-gray-200">0.00000</span></span>
-              <span className="text-gray-400">L: <span className="text-gray-200">0.00000</span></span>
-              <span className="text-gray-400">C: <span className="text-gray-200">0.00000</span></span>
+               {chartData.length > 0 ? (
+                 <>
+                   <span className="text-gray-400">O: <span className="text-gray-200">{(chartData[chartData.length - 1] as any).open.toFixed(5)}</span></span>
+                   <span className="text-gray-400">H: <span className="text-gray-200">{(chartData[chartData.length - 1] as any).high.toFixed(5)}</span></span>
+                   <span className="text-gray-400">L: <span className="text-gray-200">{(chartData[chartData.length - 1] as any).low.toFixed(5)}</span></span>
+                   <span className="text-gray-400">C: <span className="text-emerald-400 font-bold">{(chartData[chartData.length - 1] as any).close.toFixed(5)}</span></span>
+                 </>
+               ) : (
+                 <span className="text-gray-500 italic">Aguardando dados...</span>
+               )}
             </div>
           </div>
           <div className="flex-1 relative">
-            <TradingChart data={initialChartData} visualStudies={visualStudies} />
+            <TradingChart data={chartData} visualStudies={visualStudies} markers={chartMarkers} />
           </div>
         </section>
 
-        {/* AI LOGS TERMINAL */}
         <aside className="w-96 flex flex-col bg-[#0f0f0f]">
           <div className="flex items-center gap-2 px-4 py-2.5 bg-[#141414] border-b border-[#27272a]">
             <Terminal className="w-4 h-4 text-gray-400" />
@@ -275,12 +343,12 @@ export default function CockpitPage() {
             {aiLogs.length === 0 ? (
               <div className="text-gray-600 italic">Aguardando inicialização do motor de inferência...</div>
             ) : (
-              aiLogs.map((log) => {
+              aiLogs.map((log, index) => {
                 let isAnalysis = log.type === 'ai_analysis';
-                let parts = log.message.split('\n');
+                let parts = log.message ? log.message.split('\n') : [];
                 
                 return (
-                  <div key={log.id} className="flex flex-col gap-1 border-l-2 border-[#27272a] pl-2 pb-2 mb-2 border-b border-[#27272a]/50 last:border-b-0">
+                  <div key={log.id || index} className="flex flex-col gap-1 border-l-2 border-[#27272a] pl-2 pb-2 mb-2 border-b border-[#27272a]/50 last:border-b-0">
                     <div className="flex items-center gap-2">
                       <span className="text-gray-500">{log.timestamp}</span>
                       <span className={`font-bold uppercase ${
@@ -326,7 +394,6 @@ export default function CockpitPage() {
         </aside>
       </main>
 
-      {/* FOOTER - POSITIONS & HISTORY */}
       <footer className="h-64 flex flex-col bg-[#141414] border-t border-[#27272a] shrink-0">
         <div className="flex items-center gap-6 px-4 py-2 border-b border-[#27272a] text-sm">
           <button className="font-semibold text-blue-400 border-b-2 border-blue-400 pb-1 -mb-[9px]">
@@ -343,9 +410,9 @@ export default function CockpitPage() {
                 <th className="px-4 py-2 font-medium">Ticket</th>
                 <th className="px-4 py-2 font-medium">Ativo</th>
                 <th className="px-4 py-2 font-medium">Tipo</th>
-                <th className="px-4 py-2 font-medium">Volume</th>
-                <th className="px-4 py-2 font-medium">Preço Abertura</th>
-                <th className="px-4 py-2 font-medium">Preço Atual</th>
+                <th className="px-4 py-2 font-medium text-right">Volume</th>
+                <th className="px-4 py-2 font-medium text-right">P. Abertura</th>
+                <th className="px-4 py-2 font-medium text-right">P. Atual</th>
                 <th className="px-4 py-2 font-medium text-right">Lucro</th>
               </tr>
             </thead>
@@ -358,15 +425,15 @@ export default function CockpitPage() {
                 </tr>
               ) : (
                 openPositions.map((pos) => (
-                  <tr key={pos.ticket} className="border-b border-[#27272a] hover:bg-[#1f1f1f]">
+                  <tr key={pos.ticket} className="border-b border-[#27272a] hover:bg-[#1f1f1f] transition-colors">
                     <td className="px-4 py-2">{pos.ticket}</td>
                     <td className="px-4 py-2 font-bold">{pos.symbol}</td>
                     <td className={`px-4 py-2 font-bold ${pos.type === 'BUY' ? 'text-emerald-500' : 'text-red-500'}`}>
                       {pos.type}
                     </td>
-                    <td className="px-4 py-2">{pos.volume.toFixed(2)}</td>
-                    <td className="px-4 py-2">{pos.openPrice.toFixed(5)}</td>
-                    <td className="px-4 py-2">{pos.currentPrice.toFixed(5)}</td>
+                    <td className="px-4 py-2 text-right">{pos.volume.toFixed(2)}</td>
+                    <td className="px-4 py-2 text-right">{pos.openPrice.toFixed(5)}</td>
+                    <td className="px-4 py-2 text-right">{pos.currentPrice.toFixed(5)}</td>
                     <td className={`px-4 py-2 text-right font-bold ${pos.profit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                       ${pos.profit.toFixed(2)}
                     </td>
@@ -378,7 +445,6 @@ export default function CockpitPage() {
         </div>
       </footer>
       
-      {/* MODAL DE CONFIGURAÇÕES */}
       {session && (
         <SettingsPanel 
           isOpen={isSettingsOpen} 
