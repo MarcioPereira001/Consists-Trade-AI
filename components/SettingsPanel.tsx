@@ -53,7 +53,7 @@ const generateB3Symbols = () => {
   const wdoYear = activeWdoIdx < currentMonthIdx ? year + 1 : year;
   const nextWdoYear = nextWdoIdx < activeWdoIdx ? year + 1 : year;
 
-  // Índice (Vence meses pares. Acontece perto do dia 15)
+  // Índice (Vence meses pares. Rola perto do dia 15)
   const winMap = ['G', 'G', 'J', 'J', 'M', 'M', 'Q', 'Q', 'V', 'V', 'Z', 'Z'];
   let activeWinLetter = winMap[month - 1];
   let winYear = year;
@@ -217,131 +217,132 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
               </button>
             </div>
 
-          {/* Datas do Replay (Só aparece se for Replay) */}
-          {config.ambiente === 'REPLAY HISTÓRICO' && (
-            <div className="grid grid-cols-2 gap-4 p-3 bg-purple-500/10 border border-purple-500/20 rounded-md">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-purple-300">Data Início (Replay)</label>
-                <input 
-                  type="date" 
-                  value={config.data_replay_inicio}
-                  onChange={(e) => setConfig({...config, data_replay_inicio: e.target.value})}
-                  className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
-                />
+            {/* Datas do Replay (Só aparece se for Replay) */}
+            {config.ambiente === 'REPLAY HISTÓRICO' && (
+              <div className="grid grid-cols-2 gap-4 p-3 bg-purple-500/10 border border-purple-500/20 rounded-md">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-purple-300">Data Início (Replay)</label>
+                  <input 
+                    type="date" 
+                    value={config.data_replay_inicio}
+                    onChange={(e) => setConfig({...config, data_replay_inicio: e.target.value})}
+                    className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-purple-300">Data Fim (Replay)</label>
+                  <input 
+                    type="date" 
+                    value={config.data_replay_fim}
+                    onChange={(e) => setConfig({...config, data_replay_fim: e.target.value})}
+                    className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-purple-300">Data Fim (Replay)</label>
-                <input 
-                  type="date" 
-                  value={config.data_replay_fim}
-                  onChange={(e) => setConfig({...config, data_replay_fim: e.target.value})}
-                  className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
-                />
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Ativo */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-300">Ativo Operacional</label>
-            <select 
-              value={config.ativo}
-              onChange={(e) => setConfig({...config, ativo: e.target.value})}
-              className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-            >
-              <optgroup label="Forex Majors">
-                <option value="EURUSD">EURUSD</option>
-                <option value="GBPUSD">GBPUSD</option>
-                <option value="USDJPY">USDJPY</option>
-                <option value="USDCHF">USDCHF</option>
-                <option value="AUDUSD">AUDUSD</option>
-                <option value="USDCAD">USDCAD</option>
-              </optgroup>
-              <optgroup label="Índices Globais">
-                <option value="SP500">SP500 (S&P 500)</option>
-                <option value="US30">US30 (Dow Jones)</option>
-                <option value="NAS100">NAS100 (Nasdaq)</option>
-                <option value="GER40">GER40 (DAX)</option>
-              </optgroup>
-              <optgroup label="Commodities">
-                <option value="XAUUSD">XAUUSD (Ouro)</option>
-                <option value="XAGUSD">XAGUSD (Prata)</option>
-                <option value="USOIL">USOIL (Petróleo WTI)</option>
-              </optgroup>
-              <optgroup label="Criptomoedas">
-                <option value="BTCUSD">BTCUSD (Bitcoin)</option>
-                <option value="ETHUSD">ETHUSD (Ethereum)</option>
-              </optgroup>
-              <optgroup label="B3 (Brasil)">
-                <option value="WINJ26">WINJ26 (Mini Índice)</option>
-                <option value="WDOJ26">WDOJ26 (Mini Dólar)</option>
-              </optgroup>
-            </select>
-          </div>
-
-          {/* Lote */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-300">Tamanho do Lote</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={Number.isNaN(config.lote) ? '' : config.lote}
-              onChange={(e) => setConfig({...config, lote: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
-              className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
-            />
-          </div>
-
-          {/* Stop Loss & Take Profit */}
-          <div className="grid grid-cols-2 gap-4">
+            {/* Ativo */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Ativo para Análise</label>
+              <label className="text-sm font-medium text-gray-300">Ativo Operacional</label>
               <select 
                 value={config.ativo}
                 onChange={(e) => setConfig({...config, ativo: e.target.value})}
-                className="w-full bg-black border border-zinc-800 rounded-xl p-4 text-white font-bold appearance-none focus:border-blue-500"
+                className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
               >
-                {marketType === 'B3' ? (
-                  (() => {
-                    const b3 = generateB3Symbols();
-                    return (
-                      <>
-                        <optgroup label="MINI CONTRATOS (AUTO-ATUALIZADOS)">
-                          <option value={b3.win}>{b3.win} (Índice Atual)</option>
-                          <option value={b3.wdoAtual}>{b3.wdoAtual} (Dólar Atual)</option>
-                          <option value={b3.wdoProx}>{b3.wdoProx} (Dólar Próximo)</option>
-                        </optgroup>
-                        <optgroup label="CRIPTO FUTUROS B3 (AUTO-ATUALIZADOS)">
-                          <option value={b3.bitAtual}>{b3.bitAtual} (Bitcoin Atual)</option>
-                          <option value={b3.bitProx}>{b3.bitProx} (Bitcoin Próximo)</option>
-                          <option value="BITH11">BITH11 (ETF Bitcoin)</option>
-                          <option value="ETHE11">ETHE11 (ETF Ethereum)</option>
-                        </optgroup>
-                        <optgroup label="BLUE CHIPS">
-                          <option value="PETR4">PETR4</option>
-                          <option value="VALE3">VALE3</option>
-                          <option value="ITUB4">ITUB4</option>
-                          <option value="BBAS3">BBAS3</option>
-                        </optgroup>
-                      </>
-                    );
-                  })()
-                ) : (
-                  <>
-                    <optgroup label="FOREX">
-                      <option value="EURUSD">EURUSD</option>
-                      <option value="GBPUSD">GBPUSD</option>
-                      <option value="USDJPY">USDJPY</option>
-                      <option value="XAUUSD">GOLD</option>
-                    </optgroup>
-                    <optgroup label="GLOBAL CRIPTO">
-                      <option value="BTCUSD">BITCOIN</option>
-                      <option value="ETHUSD">ETHEREUM</option>
-                    </optgroup>
-                  </>
-                )}
+                <optgroup label="Forex Majors">
+                  <option value="EURUSD">EURUSD</option>
+                  <option value="GBPUSD">GBPUSD</option>
+                  <option value="USDJPY">USDJPY</option>
+                  <option value="USDCHF">USDCHF</option>
+                  <option value="AUDUSD">AUDUSD</option>
+                  <option value="USDCAD">USDCAD</option>
+                </optgroup>
+                <optgroup label="Índices Globais">
+                  <option value="SP500">SP500 (S&P 500)</option>
+                  <option value="US30">US30 (Dow Jones)</option>
+                  <option value="NAS100">NAS100 (Nasdaq)</option>
+                  <option value="GER40">GER40 (DAX)</option>
+                </optgroup>
+                <optgroup label="Commodities">
+                  <option value="XAUUSD">XAUUSD (Ouro)</option>
+                  <option value="XAGUSD">XAGUSD (Prata)</option>
+                  <option value="USOIL">USOIL (Petróleo WTI)</option>
+                </optgroup>
+                <optgroup label="Criptomoedas">
+                  <option value="BTCUSD">BTCUSD (Bitcoin)</option>
+                  <option value="ETHUSD">ETHUSD (Ethereum)</option>
+                </optgroup>
+                <optgroup label="B3 (Brasil)">
+                  <option value="WINJ26">WINJ26 (Mini Índice)</option>
+                  <option value="WDOJ26">WDOJ26 (Mini Dólar)</option>
+                </optgroup>
               </select>
             </div>
-          </div>
+
+            {/* Lote */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-300">Tamanho do Lote</label>
+              <input 
+                type="number" 
+                step="0.01"
+                value={Number.isNaN(config.lote) ? '' : config.lote}
+                onChange={(e) => setConfig({...config, lote: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+                className="w-full bg-[#0a0a0a] border border-[#27272a] rounded-md px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+              />
+            </div>
+
+            {/* Stop Loss & Take Profit */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Ativo para Análise</label>
+                <select 
+                  value={config.ativo}
+                  onChange={(e) => setConfig({...config, ativo: e.target.value})}
+                  className="w-full bg-black border border-zinc-800 rounded-xl p-4 text-white font-bold appearance-none focus:border-blue-500"
+                >
+                  {marketType === 'B3' ? (
+                    (() => {
+                      const b3 = generateB3Symbols();
+                      return (
+                        <>
+                          <optgroup label="MINI CONTRATOS (AUTO-ATUALIZADOS)">
+                            <option value={b3.win}>{b3.win} (Índice Atual)</option>
+                            <option value={b3.wdoAtual}>{b3.wdoAtual} (Dólar Atual)</option>
+                            <option value={b3.wdoProx}>{b3.wdoProx} (Dólar Próximo)</option>
+                          </optgroup>
+                          <optgroup label="CRIPTO FUTUROS B3 (AUTO-ATUALIZADOS)">
+                            <option value={b3.bitAtual}>{b3.bitAtual} (Bitcoin Atual)</option>
+                            <option value={b3.bitProx}>{b3.bitProx} (Bitcoin Próximo)</option>
+                            <option value="BITH11">BITH11 (ETF Bitcoin)</option>
+                            <option value="ETHE11">ETHE11 (ETF Ethereum)</option>
+                          </optgroup>
+                          <optgroup label="BLUE CHIPS">
+                            <option value="PETR4">PETR4</option>
+                            <option value="VALE3">VALE3</option>
+                            <option value="ITUB4">ITUB4</option>
+                            <option value="BBAS3">BBAS3</option>
+                          </optgroup>
+                        </>
+                      );
+                    })()
+                  ) : (
+                    <>
+                      <optgroup label="FOREX">
+                        <option value="EURUSD">EURUSD</option>
+                        <option value="GBPUSD">GBPUSD</option>
+                        <option value="USDJPY">USDJPY</option>
+                        <option value="XAUUSD">GOLD</option>
+                      </optgroup>
+                      <optgroup label="GLOBAL CRIPTO">
+                        <option value="BTCUSD">BITCOIN</option>
+                        <option value="ETHUSD">ETHEREUM</option>
+                      </optgroup>
+                    </>
+                  )}
+                </select>
+              </div>
+            </div>
+          </div> {/* <-- AQUI ESTÁ A DIV QUE FALTAVA (FECHANDO A SEÇÃO 1) */}
 
           {/* SEÇÃO 2: AMBIENTE E REPLAY */}
           <div className="space-y-6 border-b border-zinc-800 pb-8">
