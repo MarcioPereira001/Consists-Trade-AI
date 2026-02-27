@@ -18,9 +18,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Gerenciador de Conexões WebSocket
+# --- GERENCIADOR DE CONEXÕES WEBSOCKET (ROBUSTO) ---
 class ConnectionManager:
     def __init__(self):
+        # Centralizamos as conexões aqui para evitar erros de 'undefined'
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
@@ -28,21 +29,32 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        """
+        Envia mensagens para todos os clientes. 
+        Usa send_json para garantir compatibilidade com o Frontend.
+        """
         for connection in self.active_connections:
             try:
-                await connection.send_text(json.dumps(message))
+                await connection.send_json(message)
             except Exception as e:
-                print(f"Erro ao enviar mensagem para cliente: {e}")
+                # Se falhar, removemos a conexão morta
+                print(f"Erro ao transmitir: {e}")
+                self.active_connections.remove(connection)
 
 manager = ConnectionManager()
 
-# Configuração do CORS Middleware
+# --- CONFIGURAÇÕES GLOBAIS DE CONTROLE ---
+current_symbol = "EURUSD" # padrão inicial se no supabase não configurado outro
+replay_speed = 1.0
+
+# Configuração do CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite todas as origens (ajuste para produção)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,7 +64,6 @@ app.add_middleware(
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-# Fail-safe: Apenas inicializa se as chaves existirem
 supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_KEY:
     try:
@@ -60,58 +71,78 @@ if SUPABASE_URL and SUPABASE_KEY:
         print("Supabase client inicializado com sucesso.")
     except Exception as e:
         print(f"Erro ao inicializar Supabase: {e}")
-else:
-    print("Aviso: SUPABASE_URL ou SUPABASE_KEY não configurados.")
+
+# --- ENDPOINTS DE API ---
 
 @app.get("/api/health")
 async def health_check():
-    """
-    Endpoint de verificação de saúde do sistema.
-    """
     return {
         "status": "online",
-        "mt5": "pending",
+        "current_asset": current_symbol,
+        "replay_speed": replay_speed,
         "timestamp": datetime.now().isoformat()
     }
 
+@app.post("/api/select_asset")
+async def select_asset(data: dict):
+    global current_symbol
+    new_asset = data.get("asset")
+    if new_asset:
+        current_symbol = new_asset
+        print(f"--- COMANDO RECEBIDO: Trocando foco para {current_symbol} ---")
+        return {"status": "success", "asset": current_symbol}
+    return {"status": "error", "message": "Ativo não informado"}, 400
+
+@app.post("/api/set_replay_speed")
+async def set_speed(data: dict):
+    global replay_speed
+    try:
+        replay_speed = float(data.get("speed", 1.0))
+        print(f"--- VELOCIDADE REPLAY: {replay_speed}x ---")
+        return {"status": "success", "speed": replay_speed}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}, 400
+
 @app.post("/api/broadcast_log")
-async def broadcast_log(request: Request):
+async def broadcast_log(data: dict):
     """
-    Endpoint interno para o trading_bot.py enviar logs para os clientes conectados.
+    Este é o endpoint que o trading_bot.py chama.
+    Agora ele usa o manager.broadcast corretamente.
     """
-    data = await request.json()
     await manager.broadcast(data)
-    return {"status": "ok"}
+    return {"status": "sent"}
+
+# --- ENDPOINT WEBSOCKET ---
 
 @app.websocket("/ws/logs")
 async def websocket_logs(websocket: WebSocket):
-    """
-    Endpoint WebSocket para envio de logs em tempo real para o Frontend.
-    """
     await manager.connect(websocket)
-    print("Novo cliente conectado ao WebSocket de logs.")
+    print(f"Novo cliente conectado. Total: {len(manager.active_connections)}")
     
     try:
-        # Envia log inicial
-        initial_log = {
+        # Envia log inicial de boas-vindas
+        await websocket.send_json({
             "id": "init-001",
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "type": "info",
-            "message": "Motor Consists Trade AI Iniciado. Aguardando conexão MT5..."
-        }
-        await websocket.send_text(json.dumps(initial_log))
+            "message": "Motor Consists Trade AI Iniciado. Conexão Estabelecida."
+        })
         
-        # Loop de manutenção da conexão (Keep-alive)
         while True:
-            await asyncio.sleep(10) # Aguarda 10 segundos
+            # Mantém a conexão aberta recebendo pings ou apenas aguardando
+            data = await websocket.receive_text()
+            # Se o frontend mandar algo, podemos tratar aqui
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-        print("Cliente desconectado do WebSocket de logs.")
+        print("Cliente desconectado.")
     except Exception as e:
         manager.disconnect(websocket)
         print(f"Erro no WebSocket: {e}")
 
+# --- EXECUÇÃO ---
+
 if __name__ == "__main__":
     import uvicorn
+    # reload=True é ótimo para desenvolvimento
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
