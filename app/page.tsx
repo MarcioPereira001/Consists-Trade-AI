@@ -101,14 +101,15 @@ export default function CockpitPage() {
   // Função para sincronizar a troca de ativo com o Backend
   const syncAssetWithBackend = async (asset: string) => {
     try {
-      await fetch('http://127.0.0.1:8000/api/select_asset', {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      await fetch(`${apiUrl}/api/select_asset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ asset: asset }),
       });
       console.log("Backend sincronizado com o ativo:", asset);
     } catch (error) {
-      console.error("Erro ao sincronizar ativo com o backend:", error);
+      console.error("Erro ao sincronizar ativo com o backend (Pode ser bloqueio HTTPS):", error);
     }
   };
 
@@ -125,75 +126,85 @@ export default function CockpitPage() {
     }
   }, [aiLogs]);
 
+  // CONEXÃO WEBSOCKET (COM PROTEÇÃO ANTI-TELA PRETA)
   useEffect(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/logs';
-    const ws = new WebSocket(wsUrl);
+    let ws: WebSocket | null = null;
 
-    ws.onopen = () => {
-      setBackendStatus('online');
-      setAiStatus('connected');
-    };
+    try {
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8000/ws/logs';
+      // Se o Chrome bloquear por segurança (HTTPS vs HTTP), ele cai no catch sem quebrar o site
+      ws = new WebSocket(wsUrl);
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        
-        // 1. Tratamento de Logs e Análises (Cérebro)
-        if (data.type !== 'market_data') {
-          setAiLogs((prev) => [...prev, data]);
-          if (data.type === 'ai_analysis' && data.estudos_visuais) {
-            setVisualStudies(data.estudos_visuais);
+      ws.onopen = () => {
+        setBackendStatus('online');
+        setAiStatus('connected');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          // 1. Tratamento de Logs e Análises (Cérebro)
+          if (data.type !== 'market_data') {
+            setAiLogs((prev) => [...prev, data]);
+            if (data.type === 'ai_analysis' && data.estudos_visuais) {
+              setVisualStudies(data.estudos_visuais);
+            }
           }
-        }
-        
-        // 2. Tratamento de Dados de Mercado (Olhos - Game Mode)
-        if (data.type === 'market_data') {
-          if (data.candles) {
-            setChartData(data.candles);
-          } 
-          else if (data.tick) {
-            setChartData((prev) => {
-              const lastCandle = prev[prev.length - 1];
-              if (lastCandle) {
-                const updatedCandle = {
-                  ...lastCandle,
-                  close: data.tick.price,
-                  high: Math.max(lastCandle.high, data.tick.price),
-                  low: Math.min(lastCandle.low, data.tick.price),
-                };
-                return [...prev.slice(0, -1), updatedCandle];
-              }
-              return prev;
-            });
+          
+          // 2. Tratamento de Dados de Mercado (Olhos - Game Mode)
+          if (data.type === 'market_data') {
+            if (data.candles) {
+              setChartData(data.candles);
+            } 
+            else if (data.tick) {
+              setChartData((prev) => {
+                const lastCandle = prev[prev.length - 1];
+                if (lastCandle) {
+                  const updatedCandle = {
+                    ...lastCandle,
+                    close: data.tick.price,
+                    high: Math.max(lastCandle.high, data.tick.price),
+                    low: Math.min(lastCandle.low, data.tick.price),
+                  };
+                  return [...prev.slice(0, -1), updatedCandle];
+                }
+                return prev;
+              });
+            }
+            setMt5Status('connected');
           }
-          setMt5Status('connected');
+
+          if (data.type === 'trade' && data.marker) {
+            setChartMarkers(prev => [...prev, data.marker]);
+          }
+
+        } catch (error) {
+          console.error('Erro no processamento de dados em tempo real:', error);
         }
+      };
 
-        if (data.type === 'trade' && data.marker) {
-          setChartMarkers(prev => [...prev, data.marker]);
-        }
+      ws.onclose = () => {
+        setBackendStatus('offline');
+        setAiStatus('disconnected');
+        setMt5Status('disconnected');
+      };
 
-      } catch (error) {
-        console.error('Erro no processamento de dados em tempo real:', error);
-      }
-    };
+      ws.onerror = () => {
+        console.warn('WebSocket desconectado ou falha na conexão (Bloqueio de Mixed Content).');
+        setBackendStatus('offline');
+        setAiStatus('disconnected');
+        setMt5Status('disconnected');
+      };
 
-    ws.onclose = () => {
+    } catch (error) {
+      console.error("Escudo ativado: O navegador bloqueou a conexão insegura, mas o painel continua vivo.", error);
       setBackendStatus('offline');
-      setAiStatus('disconnected');
-      setMt5Status('disconnected');
-    };
+    }
 
-    ws.onerror = () => {
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('WebSocket desconectado ou falha na conexão.');
-      }
-      setBackendStatus('offline');
-      setAiStatus('disconnected');
-      setMt5Status('disconnected');
+    return () => {
+      if (ws) ws.close();
     };
-
-    return () => ws.close();
   }, []);
 
   return (
@@ -306,7 +317,10 @@ export default function CockpitPage() {
                 {[1, 2, 4, 10].map((v) => (
                   <button 
                     key={v}
-                    onClick={() => axios.post('http://127.0.0.1:8000/api/set_replay_speed', { speed: v })}
+                    onClick={() => {
+                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+                      axios.post(`${apiUrl}/api/set_replay_speed`, { speed: v }).catch(console.error);
+                    }}
                     className="px-2 py-0.5 text-[10px] bg-[#27272a] hover:bg-purple-500/40 hover:text-white rounded transition-all text-gray-400"
                   >
                     {v}x
