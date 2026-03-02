@@ -441,6 +441,21 @@ export default function CockpitPage() {
                           return <div key={idx} className="text-gray-300">{part}</div>;
                         })}
                       </div>
+                    ) : log.type === 'trade' && parts.length > 1 ? (
+                      <div className="space-y-1 mt-1">
+                        <div className="font-bold text-emerald-400">{parts[0]}</div>
+                        {parts.slice(1).map((part: string, idx: number) => {
+                          if (part.startsWith('🧠 Raciocínio da IA:')) {
+                            return (
+                              <div key={idx} className="mt-2 p-2 bg-emerald-900/20 border border-emerald-500/30 rounded text-emerald-200">
+                                <span className="font-bold text-emerald-400">🧠 Raciocínio da IA:</span>
+                                <p className="mt-1 text-xs leading-relaxed">{part.replace('🧠 Raciocínio da IA:', '').trim()}</p>
+                              </div>
+                            );
+                          }
+                          return <div key={idx} className="text-emerald-300">{part}</div>;
+                        })}
+                      </div>
                     ) : (
                       <span className={`
                         ${log.type === 'error' ? 'text-red-400' : ''}

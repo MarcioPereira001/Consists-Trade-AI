@@ -30,7 +30,7 @@ class MT5Service:
 
     def obter_dados_mercado(self, ativo: str, timeframe: int = mt5.TIMEFRAME_M5, qtd_candles: int = 100):
         """
-        Obtém os dados históricos (OHLCV) do ativo especificado.
+        Obtém os dados históricos (OHLCV) do ativo especificado e adiciona indicadores de momento (RSI, Estocástico).
         """
         if not self.connected:
             print("MT5 não está conectado. Tentando reconectar...")
@@ -44,7 +44,25 @@ class MT5Service:
             
         df = pd.DataFrame(rates)
         df['time'] = pd.to_datetime(df['time'], unit='s')
-        return df[['time', 'open', 'high', 'low', 'close', 'tick_volume']]
+        
+        # --- CÁLCULO DE INDICADORES NATIVOS (PANDAS) ---
+        # 1. RSI (Relative Strength Index) - Período 14
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['rsi_14'] = 100 - (100 / (1 + rs))
+        
+        # 2. Estocástico (Stochastic Oscillator) - %K(14), %D(3)
+        low_14 = df['low'].rolling(window=14).min()
+        high_14 = df['high'].rolling(window=14).max()
+        df['stoch_k'] = 100 * ((df['close'] - low_14) / (high_14 - low_14))
+        df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
+        
+        # Preenche NaNs iniciais com 50 (neutro) para evitar quebra na IA
+        df.fillna({'rsi_14': 50, 'stoch_k': 50, 'stoch_d': 50}, inplace=True)
+        
+        return df[['time', 'open', 'high', 'low', 'close', 'tick_volume', 'rsi_14', 'stoch_k', 'stoch_d']]
 
     def obter_ohlc_ontem(self, ativo: str):
         """

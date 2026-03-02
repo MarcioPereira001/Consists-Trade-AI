@@ -23,8 +23,29 @@ interface TradingChartProps {
 export default function TradingChart({ data, visualStudies, markers = [], armadilha }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const ema9SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema21SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const chartRef = useRef<any>(null);
   const priceLinesRef = useRef<any[]>([]);
+  const lastDataLengthRef = useRef<number>(0);
+
+  // Função para calcular EMA
+  const calculateEMA = (data: CandlestickData<Time>[], period: number) => {
+    if (!data || data.length === 0) return [];
+    const emaData: { time: Time; value: number }[] = [];
+    const k = 2 / (period + 1);
+    let ema = data[0].close;
+    
+    for (let i = 0; i < data.length; i++) {
+      if (i === 0) {
+        emaData.push({ time: data[i].time, value: ema });
+      } else {
+        ema = (data[i].close - ema) * k + ema;
+        emaData.push({ time: data[i].time, value: ema });
+      }
+    }
+    return emaData;
+  };
 
   // 1. Efeito de Inicialização do Gráfico
   useEffect(() => {
@@ -62,12 +83,32 @@ export default function TradingChart({ data, visualStudies, markers = [], armadi
       wickDownColor: '#ef4444',
     });
 
+    const ema9Series = chart.addLineSeries({
+      color: '#eab308', // Amarelo
+      lineWidth: 2,
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
+    const ema21Series = chart.addLineSeries({
+      color: '#38bdf8', // Azul Claro
+      lineWidth: 2,
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
     // Se houver dados iniciais, carrega
     if (data && data.length > 0) {
       candlestickSeries.setData(data);
+      ema9Series.setData(calculateEMA(data, 9));
+      ema21Series.setData(calculateEMA(data, 21));
     }
 
     seriesRef.current = candlestickSeries;
+    ema9SeriesRef.current = ema9Series;
+    ema21SeriesRef.current = ema21Series;
     chartRef.current = chart;
 
     const handleResize = () => {
@@ -90,14 +131,33 @@ export default function TradingChart({ data, visualStudies, markers = [], armadi
 
   // 2. Efeito para Sincronização de Dados (Full Set ou New Candle)
   useEffect(() => {
-    if (!seriesRef.current || !data) return;
+    if (!seriesRef.current || !data || data.length === 0) return;
     
-    // Se a quantidade de dados mudou drasticamente (ex: troca de ativo), damos setData
-    // Caso contrário, usamos o update para fluidez (Game Mode)
-    const lastItem = data[data.length - 1];
-    if (lastItem) {
-      seriesRef.current.update(lastItem);
+    const currentDataLength = data.length;
+    const previousDataLength = lastDataLengthRef.current;
+
+    if (Math.abs(currentDataLength - previousDataLength) > 1 || previousDataLength === 0) {
+      seriesRef.current.setData(data);
+      if (ema9SeriesRef.current && ema21SeriesRef.current) {
+        ema9SeriesRef.current.setData(calculateEMA(data, 9));
+        ema21SeriesRef.current.setData(calculateEMA(data, 21));
+      }
+    } else {
+      const lastItem = data[data.length - 1];
+      if (lastItem) {
+        seriesRef.current.update(lastItem);
+        
+        // Atualiza as EMAs
+        if (ema9SeriesRef.current && ema21SeriesRef.current) {
+          const ema9Data = calculateEMA(data, 9);
+          const ema21Data = calculateEMA(data, 21);
+          if (ema9Data.length > 0) ema9SeriesRef.current.update(ema9Data[ema9Data.length - 1]);
+          if (ema21Data.length > 0) ema21SeriesRef.current.update(ema21Data[ema21Data.length - 1]);
+        }
+      }
     }
+    
+    lastDataLengthRef.current = currentDataLength;
   }, [data]);
 
   // 3. Efeito para as Setas de Compra/Venda (Markers) e Tendência da IA

@@ -98,7 +98,7 @@ class AITrader:
         }
 
     def _formatar_candles_raio_x(self, df, num_candles):
-        """Formata os candles fechados com cálculo exato de pavios para a IA."""
+        """Formata os candles fechados com cálculo exato de pavios e indicadores para a IA."""
         if df is None or df.empty or len(df) < 2: return "N/A"
         # Remove o candle atual (aberto) e pega os últimos 'num_candles'
         df_closed = df.iloc[:-1].tail(num_candles)
@@ -108,12 +108,21 @@ class AITrader:
             o, h, l, c = row['open'], row['high'], row['low'], row['close']
             pavio_sup = h - max(o, c)
             pavio_inf = min(o, c) - l
-            linhas.append(f"[Tempo: {tempo} | Abertura: {o:.5f} | Max: {h:.5f} | Min: {l:.5f} | Fechamento: {c:.5f} | Pavio Sup: {pavio_sup:.5f} | Pavio Inf: {pavio_inf:.5f}]")
+            
+            # Adiciona RSI e Estocástico se existirem no DataFrame
+            rsi = f" | RSI: {row['rsi_14']:.1f}" if 'rsi_14' in row else ""
+            stoch = f" | StochK: {row['stoch_k']:.1f}" if 'stoch_k' in row else ""
+            
+            linhas.append(f"[Tempo: {tempo} | Abertura: {o:.5f} | Max: {h:.5f} | Min: {l:.5f} | Fechamento: {c:.5f} | Pavio Sup: {pavio_sup:.5f} | Pavio Inf: {pavio_inf:.5f}{rsi}{stoch}]")
         return "\n".join(linhas)
 
     def _encontrar_pivots(self, df, num_pivots=3):
-        """Encontra os últimos topos e fundos confirmados (Pivot Points)."""
+        """Encontra os últimos topos e fundos confirmados (Pivot Points) com proteção anti-ruído."""
         if df is None or len(df) < 10: return "N/A"
+        
+        # Proteção: Se o DataFrame não tiver dados suficientes para a janela, reduz a exigência
+        janela = 2 if len(df) > 20 else 1
+        
         highs = df['high'].values
         lows = df['low'].values
         times = df['time'].values
@@ -121,20 +130,57 @@ class AITrader:
         topos = []
         fundos = []
         
-        for i in range(2, len(df) - 2):
-            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
-                t = times[i]
-                t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
-                topos.append(f"{highs[i]:.5f} ({t_str})")
-            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
-                t = times[i]
-                t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
-                fundos.append(f"{lows[i]:.5f} ({t_str})")
+        try:
+            for i in range(janela, len(df) - janela):
+                # Verifica se é o maior valor na janela local (Topo)
+                is_topo = True
+                for j in range(1, janela + 1):
+                    if highs[i] <= highs[i-j] or highs[i] <= highs[i+j]:
+                        is_topo = False
+                        break
+                
+                if is_topo:
+                    t = times[i]
+                    t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
+                    topos.append(f"{highs[i]:.5f} ({t_str})")
+                
+                # Verifica se é o menor valor na janela local (Fundo)
+                is_fundo = True
+                for j in range(1, janela + 1):
+                    if lows[i] >= lows[i-j] or lows[i] >= lows[i+j]:
+                        is_fundo = False
+                        break
+                        
+                if is_fundo:
+                    t = times[i]
+                    t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
+                    fundos.append(f"{lows[i]:.5f} ({t_str})")
+        except Exception as e:
+            print(f"Aviso: Erro ao calcular pivôs: {e}")
+            pass
                 
         topos_str = ", ".join(topos[-num_pivots:]) if topos else "Nenhum topo claro"
         fundos_str = ", ".join(fundos[-num_pivots:]) if fundos else "Nenhum fundo claro"
         
-        return f"Topos: {topos_str} | Fundos: {fundos_str}"
+        # Define a estrutura Macro (Tendência vs Lateralização)
+        estrutura = "INDEFINIDA"
+        if len(topos) >= 2 and len(fundos) >= 2:
+            ultimo_topo = float(topos[-1].split(" ")[0])
+            penultimo_topo = float(topos[-2].split(" ")[0])
+            ultimo_fundo = float(fundos[-1].split(" ")[0])
+            penultimo_fundo = float(fundos[-2].split(" ")[0])
+            
+            # Tolerância para lateralização (0.05% do preço)
+            tolerancia = ultimo_topo * 0.0005
+            
+            if (ultimo_topo > penultimo_topo + tolerancia) and (ultimo_fundo > penultimo_fundo + tolerancia):
+                estrutura = "TENDÊNCIA DE ALTA (HH/HL)"
+            elif (ultimo_topo < penultimo_topo - tolerancia) and (ultimo_fundo < penultimo_fundo - tolerancia):
+                estrutura = "TENDÊNCIA DE BAIXA (LH/LL)"
+            else:
+                estrutura = "LATERALIZAÇÃO (Consolidação)"
+        
+        return f"Estrutura: {estrutura} | Topos: {topos_str} | Fundos: {fundos_str}"
 
     def analisar_mercado(self, dados_macro_df, dados_micro_df, estrategia: str, relevancia_anterior: int, dados_ontem: dict, estado_anterior: str = "", image_path_m1: str = None, image_path_m5: str = None) -> dict:
         """
@@ -215,6 +261,16 @@ class AITrader:
         3. O USO DA ARMADILHA (ORDEM PROGRAMADA): Quando o preço estiver exatamente na zona de reteste (S/R), você DEVE usar o campo "ordem_programada" para armar a sua entrada (BUY/SELL) no gatilho que retoma a tendência. Assim não perdemos tempo de execução.
         4. ⚠️ ALERTA DE REVERSÃO (O FALSO PULLBACK): Analise o contexto! Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu. Nesse caso, mantenha a armadilha em "NONE" e a decisão em "WAIT".
         5. O TIRO DE SNIPER: Só arme a armadilha ou emita a ordem a mercado se o pullback vier "secando" (volume caindo) e deixar REJEIÇÃO (pavio, doji, martelo) na zona de Suporte/Resistência.
+        6. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro. Exemplo: O mercado vinha caindo (LH/LL), mas agora rompeu o último topo menor (LH) E formou um fundo maior (HL). Só a partir daí você pode armar compras.
+
+        --- ⚖️ MODO SCALPER (LATERALIZAÇÃO) ⚖️ ---
+        Se a estrutura do mercado for "LATERALIZAÇÃO (Consolidação)":
+        1. ESQUEÇA ROMPIMENTOS: Em consolidação, rompimentos são armadilhas (Breakout Traps) em 80% das vezes.
+        2. OPERE AS EXTREMIDADES: Use o RSI e o Estocástico. 
+           - Se o preço tocar a Resistência E o RSI/Stoch estiverem sobrecomprados (>70/>80), arme VENDA.
+           - Se o preço tocar o Suporte E o RSI/Stoch estiverem sobrevendidos (<30/<20), arme COMPRA.
+        3. FAST-EXIT (SAÍDA RÁPIDA): No campo "estrategia_escolhida", escreva "SCALPER_MODE". Isso avisará o robô para fechar a operação rapidamente assim que o indicador reverter, sem esperar o Take Profit fixo.
+        4. ROMPIMENTO DE CAIXOTE: Se o preço romper a consolidação com FORÇA (Volume Anômalo + Vela de Força), a lateralização acabou. Mude para o modo Tendência e arme a ordem a favor do rompimento no primeiro pullback.
 
         --- FILTROS DE VERBOSIDADE E ECONOMIA DE TOKENS ---
         1. SE A DECISÃO FOR 'WAIT' E A ARMADILHA FOR 'NONE': O campo 'motivo' DEVE ser EXATAMENTE "[Preço {preco_atual}] Status mantido. Aguardando confirmação.". NÃO escreva mais nada.

@@ -239,7 +239,7 @@ async def trading_loop():
                             await broadcast_to_frontend({
                                 "id": str(datetime.now().timestamp()),
                                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                                "type": "info",
+                                "type": "trade",
                                 "message": msg_execucao
                             })
                             
@@ -266,8 +266,48 @@ async def trading_loop():
                 # ======================================================================
                 minuto_atual = datetime.now().minute
                 
-                # CICLO DE 15 SEGUNDOS: Apenas monitora, não chama a IA
+                # CICLO DE 15 SEGUNDOS: Monitora Armadilhas e Fast-Exit (Scalper)
                 if minuto_atual == ultimo_minuto_ia:
+                    # --- LÓGICA DE FAST-EXIT (MODO SCALPER) ---
+                    # Se estamos posicionados e a IA ativou o modo Scalper, monitoramos a exaustão
+                    if ambiente != 'REPLAY HISTÓRICO' and mt5_service.tem_posicao_aberta(ativo):
+                        estado_ia = memoria_estado_ia.get(profile_id, "")
+                        if "SCALPER_MODE" in estado_ia:
+                            # Pega o último RSI/Stoch do M1
+                            rsi_atual = pacote_dados["m1"]['rsi_14'].iloc[-1]
+                            stoch_k = pacote_dados["m1"]['stoch_k'].iloc[-1]
+                            
+                            # Verifica o tipo de posição aberta
+                            posicoes = mt5.positions_get(symbol=ativo)
+                            if posicoes:
+                                pos = posicoes[0]
+                                tipo_pos = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
+                                
+                                # Regra de Saída Rápida: Reversão do Indicador
+                                # Se comprou na sobrevenda (<30) e o RSI cruzou pra cima de 50 (ou Stoch > 80)
+                                if tipo_pos == "BUY" and (rsi_atual > 60 or stoch_k > 80):
+                                    print(f"⚡ FAST-EXIT SCALPER: Fechando COMPRA. RSI: {rsi_atual:.1f} | Stoch: {stoch_k:.1f}")
+                                    # Envia ordem contrária para fechar
+                                    mt5_service.enviar_ordem(ativo, "SELL", pos.volume, 0, 0)
+                                    await broadcast_to_frontend({
+                                        "id": str(datetime.now().timestamp()),
+                                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                        "type": "trade",
+                                        "message": f"[{ativo}] ⚡ FAST-EXIT (Scalper): Posição de COMPRA encerrada por reversão de indicador (RSI: {rsi_atual:.1f})."
+                                    })
+                                
+                                # Se vendeu na sobrecompra (>70) e o RSI cruzou pra baixo de 50 (ou Stoch < 20)
+                                elif tipo_pos == "SELL" and (rsi_atual < 40 or stoch_k < 20):
+                                    print(f"⚡ FAST-EXIT SCALPER: Fechando VENDA. RSI: {rsi_atual:.1f} | Stoch: {stoch_k:.1f}")
+                                    # Envia ordem contrária para fechar
+                                    mt5_service.enviar_ordem(ativo, "BUY", pos.volume, 0, 0)
+                                    await broadcast_to_frontend({
+                                        "id": str(datetime.now().timestamp()),
+                                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                        "type": "trade",
+                                        "message": f"[{ativo}] ⚡ FAST-EXIT (Scalper): Posição de VENDA encerrada por reversão de indicador (RSI: {rsi_atual:.1f})."
+                                    })
+
                     # Apenas avisa o frontend que está vivo e monitorando
                     await broadcast_to_frontend({
                         "id": str(datetime.now().timestamp()),
@@ -377,7 +417,7 @@ async def trading_loop():
                             await broadcast_to_frontend({
                                 "id": str(datetime.now().timestamp()),
                                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                                "type": "info",
+                                "type": "trade",
                                 "message": msg_execucao_mercado
                             })
                             
