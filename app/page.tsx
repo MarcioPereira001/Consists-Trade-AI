@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Activity, Wifi, WifiOff, BrainCircuit, Terminal, Server, Settings, AlertTriangle, PauseCircle, PlayCircle, LogOut, FastForward, Play, Square } from 'lucide-react';
 import TradingChart, { VisualStudies } from '@/components/TradingChart';
 import { CandlestickData, Time, SeriesMarker } from 'lightweight-charts';
@@ -46,6 +46,33 @@ export default function CockpitPage() {
   const [chartMarkers, setChartMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [currentAsset, setCurrentAsset] = useState<string>('CARREGANDO...');
 
+  // Função para sincronizar a troca de ativo com o Backend
+  const syncAssetWithBackend = useCallback(async (asset: string) => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      await fetch(`${apiUrl}/api/select_asset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset: asset }),
+      });
+      console.log("Backend sincronizado com o ativo:", asset);
+    } catch (error) {
+      console.error("Erro ao sincronizar ativo com o backend (Pode ser bloqueio HTTPS):", error);
+    }
+  }, []);
+
+  // Busca o ativo configurado no Supabase para colocar no topo do gráfico
+  const carregarAtivoInicial = useCallback(async (userId: string) => {
+    const { data } = await supabase.from('trade_configs').select('ativo').eq('profile_id', userId).single();
+    if (data && data.ativo) {
+      setCurrentAsset(data.ativo);
+      // Sincroniza o backend com o ativo carregado
+      syncAssetWithBackend(data.ativo);
+    } else {
+      setCurrentAsset('NENHUM ATIVO');
+    }
+  }, [syncAssetWithBackend]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) {
@@ -66,7 +93,7 @@ export default function CockpitPage() {
     });
 
     return () => subscription.unsubscribe();
-  }, [router]);
+  }, [router, carregarAtivoInicial]);
 
   // Sincronização do Status do Motor AWS
   useEffect(() => {
@@ -87,39 +114,14 @@ export default function CockpitPage() {
     setTimeout(() => setIsCommanding(false), 2000);
   };
 
-  // Busca o ativo configurado no Supabase para colocar no topo do gráfico
-  const carregarAtivoInicial = async (userId: string) => {
-    const { data } = await supabase.from('trade_configs').select('ativo').eq('profile_id', userId).single();
-    if (data && data.ativo) {
-      setCurrentAsset(data.ativo);
-      // Sincroniza o backend com o ativo carregado
-      syncAssetWithBackend(data.ativo);
-    } else {
-      setCurrentAsset('NENHUM ATIVO');
-    }
-  };
 
-  // Função para sincronizar a troca de ativo com o Backend
-  const syncAssetWithBackend = async (asset: string) => {
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      await fetch(`${apiUrl}/api/select_asset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ asset: asset }),
-      });
-      console.log("Backend sincronizado com o ativo:", asset);
-    } catch (error) {
-      console.error("Erro ao sincronizar ativo com o backend (Pode ser bloqueio HTTPS):", error);
-    }
-  };
 
   // Monitora mudanças no currentAsset para sincronizar (caso venha de outras partes do app)
   useEffect(() => {
     if (currentAsset !== 'CARREGANDO...' && currentAsset !== 'NENHUM ATIVO') {
       syncAssetWithBackend(currentAsset);
     }
-  }, [currentAsset]);
+  }, [currentAsset, syncAssetWithBackend]);
 
   useEffect(() => {
     if (logsEndRef.current) {
@@ -205,7 +207,7 @@ export default function CockpitPage() {
 
     } catch (error) {
       console.error("Escudo ativado: O navegador bloqueou a conexão insegura, mas o painel continua vivo.", error);
-      setBackendStatus('offline');
+      setTimeout(() => setBackendStatus('offline'), 0);
     }
 
     return () => {

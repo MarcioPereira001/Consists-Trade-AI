@@ -8,6 +8,7 @@ import {
   MousePointer2, RefreshCcw, BarChart3
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import axios from 'axios';
 
 interface SettingsPanelProps {
   isOpen: boolean;

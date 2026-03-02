@@ -85,6 +85,7 @@ export default function TradingChart({ data, visualStudies, markers = [], armadi
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Roda apenas uma vez no mount
 
   // 2. Efeito para Sincronização de Dados (Full Set ou New Candle)
