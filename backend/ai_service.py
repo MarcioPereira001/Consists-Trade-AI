@@ -2,6 +2,8 @@ import os
 import json
 import numpy as np
 import pandas as pd
+import requests
+import time
 from datetime import datetime, timedelta
 from PIL import Image # NOVO: Biblioteca de visão computacional
 from google import genai
@@ -12,34 +14,73 @@ class NewsRadar:
         # Gatilhos Reais: Brasil, USA e Crypto (Essencial para BITH11 e WIN/WDO)
         self.hard_triggers = [
             "Copom", "IPCA", "Payroll", "FOMC", "Taxa de Juros", 
-            "PIB", "CPI USA", "Decisão FED", "SEC Crypto", 
-            "Relatório Focus", "Caged", "Inflação"
+            "PIB", "CPI", "Decisão FED", "SEC", 
+            "Relatório Focus", "Caged", "Inflação", "PMI", "Non-Farm"
         ]
+        self.eventos_cache = []
+        self.ultimo_update = 0
 
     def capturar_calendario_real(self):
-        """Interface para conexão com API de Calendário Econômico."""
+        """Busca notícias de alto impacto (USD) que afetam a B3 e o mundo."""
+        agora_ts = time.time()
+        # Atualiza o cache a cada 4 horas
+        if self.eventos_cache and (agora_ts - self.ultimo_update < 14400):
+            return self.eventos_cache
+
+        eventos = []
         try:
-            # Em produção, integrar com RapidAPI/Investing para dados reais
-            return [] 
+            # Fonte pública gratuita e confiável para calendário econômico (Forex Factory)
+            url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                dados = response.json()
+                for item in dados:
+                    # Filtra apenas notícias de ALTO IMPACTO para USD (afeta B3 em cheio) ou BRL (se disponível)
+                    if item.get('impact') == 'High' and item.get('country') in ['USD', 'BRL']:
+                        data_str = item.get('date', '')
+                        if data_str:
+                            try:
+                                # O formato ISO vem com timezone (ex: 2026-03-02T10:00:00-05:00)
+                                dt_evento = datetime.fromisoformat(data_str)
+                                # Converte para o fuso horário local do servidor (onde o robô roda)
+                                dt_evento_local = dt_evento.astimezone()
+                                eventos.append({
+                                    'evento': item.get('title'),
+                                    'hora': dt_evento_local.strftime("%H:%M"),
+                                    'data_completa': dt_evento_local,
+                                    'moeda': item.get('country')
+                                })
+                            except Exception as e:
+                                pass
+                
+                self.eventos_cache = eventos
+                self.ultimo_update = agora_ts
+                print(f"📡 Radar de Notícias Atualizado: {len(eventos)} eventos de ALTO IMPACTO encontrados para esta semana.")
         except Exception as e:
-            print(f"Erro ao capturar notícias: {e}")
-            return []
+            print(f"⚠️ Erro ao capturar calendário econômico: {e}")
+            
+        return self.eventos_cache
 
     def verificar_bloqueio_operacional(self):
         """Implementa o Hiato Operacional de 30 minutos em torno de notícias fatais."""
         eventos = self.capturar_calendario_real()
-        agora = datetime.now()
+        agora = datetime.now().astimezone() # Usa timezone aware para comparar corretamente
+        
         for evento in eventos:
             try:
-                # Valida se o evento está na lista de hard_triggers
-                if any(trigger.lower() in evento['evento'].lower() for trigger in self.hard_triggers):
-                    hora_evento = datetime.strptime(evento['hora'], "%H:%M").replace(
-                        year=agora.year, month=agora.month, day=agora.day
-                    )
-                    # Janela de Proteção: 15min antes e 15min depois
-                    if (agora >= hora_evento - timedelta(minutes=15)) and (agora <= hora_evento + timedelta(minutes=15)):
-                        return True, evento['evento']
-            except: continue
+                dt_evento = evento['data_completa']
+                
+                # Verifica se o evento é HOJE
+                if dt_evento.date() == agora.date():
+                    # Janela de Proteção: 15min antes e 15min depois (Total 30 min)
+                    inicio_janela = dt_evento - timedelta(minutes=15)
+                    fim_janela = dt_evento + timedelta(minutes=15)
+                    
+                    if inicio_janela <= agora <= fim_janela:
+                        return True, f"{evento['moeda']} - {evento['evento']}"
+            except Exception as e:
+                continue
+                
         return False, None
 
 class AITrader:
@@ -259,9 +300,9 @@ class AITrader:
         O SEU PROTOCOLO É O SEGUINTE:
         1. ALINHAMENTO MACRO: Opere a favor da tendência (rompimento da Máx/Mín do dia). Identificou o rompimento? Emita "WAIT_TO_BUY" ou "WAIT_TO_SELL" e não faça nada.
         2. ESPERE O PULLBACK: Aguarde o preço voltar para testar a linha rompida ou as médias móveis (Amarela/Azul).
-        3. O USO DA ARMADILHA (ORDEM PROGRAMADA): Quando o preço estiver exatamente na zona de reteste (S/R), você DEVE usar o campo "ordem_programada" para armar a sua entrada (BUY/SELL) no gatilho que retoma a tendência. Assim não perdemos tempo de execução.
+        3. O USO DA ARMADILHA (ORDEM PROGRAMADA): Quando o preço estiver se aproximando da zona de reteste (S/R), você DEVE usar o campo "ordem_programada" para armar a sua entrada (BUY/SELL) no preço exato do Suporte/Resistência. O robô executará automaticamente se houver rejeição (pavio) na zona.
         4. ⚠️ ALERTA DE REVERSÃO (O FALSO PULLBACK): Analise o contexto! Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu. Nesse caso, mantenha a armadilha em "NONE" e a decisão em "WAIT".
-        5. O TIRO DE SNIPER: Só arme a armadilha ou emita a ordem a mercado se o pullback vier "secando" (volume caindo) e deixar REJEIÇÃO (pavio, doji, martelo) na zona de Suporte/Resistência.
+        5. EXECUÇÃO A MERCADO (SNIPER): Só emita "BUY" ou "SELL" direto se o preço JÁ ESTIVER na zona de Suporte/Resistência e JÁ TIVER DEIXADO um padrão claro de rejeição (pavio, doji, martelo) a seu favor.
         6. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro. Exemplo: O mercado vinha caindo (LH/LL), mas agora rompeu o último topo menor (LH) E formou um fundo maior (HL). Só a partir daí você pode armar compras.
 
         --- ⚖️ MODO SCALPER (LATERALIZAÇÃO) ⚖️ ---

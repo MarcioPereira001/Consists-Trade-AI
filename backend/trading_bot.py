@@ -180,6 +180,8 @@ async def trading_loop():
                 preco_atual_log = float(df_micro.iloc[-1]['close']) # Tick atual (Vivo)
                 preco_fechamento_anterior = float(df_micro.iloc[-2]['close']) # Fechamento da última vela
                 preco_abertura_anterior = float(df_micro.iloc[-2]['open']) # Abertura da última vela (Para saber a cor)
+                preco_maxima_anterior = float(df_micro.iloc[-2]['high'])
+                preco_minima_anterior = float(df_micro.iloc[-2]['low'])
                 timestamp_atual = int(df_micro.iloc[-1]['time'].timestamp() if hasattr(df_micro.iloc[-1]['time'], 'timestamp') else df_micro.iloc[-1]['time'])
 
                 # --- PROTEÇÃO DINÂMICA CONTRA ERRO 10016 ---
@@ -212,15 +214,23 @@ async def trading_loop():
                         ordem_disparada = False
                         
                         if acao_armada == "BUY":
-                            # 1. Fechou acima do gatilho? | 2. Vela de força (Verde: Fechamento > Abertura)?
-                            if (preco_fechamento_anterior > gatilho and preco_fechamento_anterior > preco_abertura_anterior):
-                                print(f"🔥 ARMADILHA CONFIRMADA: Rompimento real de {gatilho} com força compradora sustentada. BUY!")
+                            # Lógica 1: Rompimento (Preço abriu abaixo/no gatilho e fechou acima com força)
+                            rompimento_buy = (preco_abertura_anterior <= gatilho and preco_fechamento_anterior > gatilho)
+                            # Lógica 2: Pullback (Preço tocou no suporte/gatilho e rejeitou formando vela verde)
+                            pullback_buy = (preco_minima_anterior <= gatilho and preco_fechamento_anterior > preco_abertura_anterior)
+                            
+                            if rompimento_buy or pullback_buy:
+                                print(f"🔥 ARMADILHA CONFIRMADA: Gatilho {gatilho} acionado (Rompimento: {rompimento_buy} | Pullback: {pullback_buy}). BUY!")
                                 ordem_disparada = True
                                 
                         elif acao_armada == "SELL":
-                            # 1. Fechou abaixo do gatilho? | 2. Vela de força (Vermelha: Fechamento < Abertura)?
-                            if (preco_fechamento_anterior < gatilho and preco_fechamento_anterior < preco_abertura_anterior):
-                                print(f"🔥 ARMADILHA CONFIRMADA: Rompimento real de {gatilho} com força vendedora sustentada. SELL!")
+                            # Lógica 1: Rompimento (Preço abriu acima/no gatilho e fechou abaixo com força)
+                            rompimento_sell = (preco_abertura_anterior >= gatilho and preco_fechamento_anterior < gatilho)
+                            # Lógica 2: Pullback (Preço tocou na resistência/gatilho e rejeitou formando vela vermelha)
+                            pullback_sell = (preco_maxima_anterior >= gatilho and preco_fechamento_anterior < preco_abertura_anterior)
+                            
+                            if rompimento_sell or pullback_sell:
+                                print(f"🔥 ARMADILHA CONFIRMADA: Gatilho {gatilho} acionado (Rompimento: {rompimento_sell} | Pullback: {pullback_sell}). SELL!")
                                 ordem_disparada = True
 
                     if ordem_disparada:
@@ -386,7 +396,13 @@ async def trading_loop():
                 motivo = analise.get('motivo', 'Sem motivo')
                 estrategia_escolhida = analise.get('estrategia_escolhida', estrategia)
 
-                print(f"IA [{nova_relevancia}★] [Preço: {preco_atual_log}] [Delay: {tempo_ia:.2f}s]: {decisao} | {motivo}")
+                # Log Silencioso para Notícias
+                if "BLOQUEIO: Notícia" in motivo:
+                    if minuto_atual % 5 == 0:
+                        print(f"🛑 [PAUSA DE NOTÍCIA] {motivo}")
+                else:
+                    print(f"IA [{nova_relevancia}★] [Preço: {preco_atual_log}] [Delay: {tempo_ia:.2f}s]: {decisao} | {motivo}")
+                    
                 if nova_armadilha.get("acao") != "NONE":
                     print(f"   🎯 ARMADILHA CONFIGURADA: {nova_armadilha['acao']} no rompimento/fechamento de {nova_armadilha['preco_gatilho']}")
                 else:
