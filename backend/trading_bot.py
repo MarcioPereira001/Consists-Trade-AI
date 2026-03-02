@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import httpx
 import requests
 import time as time_lib
 from datetime import datetime
@@ -75,9 +76,10 @@ async def save_trade_history(profile_id: str, ticket: int, ativo: str, tipo: str
         pass
 
 async def broadcast_to_frontend(message: dict):
-    """Envia os dados em tempo real para o servidor WebSocket repassar ao Painel Web."""
+    """Envia os dados em tempo real para o servidor WebSocket repassar ao Painel Web (Assíncrono)."""
     try:
-        requests.post("http://127.0.0.1:8000/api/broadcast_log", json=message, timeout=2)
+        async with httpx.AsyncClient() as client:
+            await client.post("http://127.0.0.1:8000/api/broadcast_log", json=message, timeout=2.0)
     except Exception:
         pass 
 
@@ -89,11 +91,24 @@ async def trading_loop():
         print("❌ ERRO CRÍTICO: Verifique se o MT5 da Genial/Corretora está aberto e se o .env está correto.")
         return
 
+    cached_configs = None
+    last_config_time = 0
+    ultimo_minuto_ia = -1 # Controle do ciclo de 60s
+
     while True:
         try:
-            # 1. Buscar configurações REAIS do Supabase
-            response = supabase.table('trade_configs').select('*').execute()
-            configs = response.data
+            import main
+            agora_ts = time_lib.time()
+            
+            # 1. Buscar configurações REAIS do Supabase (Otimizado com Cache)
+            if cached_configs is None or main.force_config_reload or (agora_ts - last_config_time > 300):
+                response = supabase.table('trade_configs').select('*').execute()
+                cached_configs = response.data
+                last_config_time = agora_ts
+                main.force_config_reload = False
+                print("🔄 Configurações recarregadas do banco de dados (Cache Atualizado).")
+            
+            configs = cached_configs
             
             if not configs:
                 await asyncio.sleep(10)
@@ -218,6 +233,16 @@ async def trading_loop():
                         memoria_ordem_programada[profile_id] = {"acao": "NONE"}
                         
                         if resultado:
+                            motivo_detalhado = armadilha.get("motivo_ia", "Motivo não registrado.")
+                            msg_execucao = f"[{ativo}] 🎯 ARMADILHA {acao_armada} ACIONADA no preço {preco_atual_log}!\n🧠 Raciocínio da IA: {motivo_detalhado}"
+                            
+                            await broadcast_to_frontend({
+                                "id": str(datetime.now().timestamp()),
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "type": "info",
+                                "message": msg_execucao
+                            })
+                            
                             await broadcast_to_frontend({
                                 "type": "trade",
                                 "marker": {
@@ -237,14 +262,30 @@ async def trading_loop():
                     continue
 
                 # ======================================================================
-                # MÓDULO ANALISTA (IA): LEITURA DE FOTOS A CADA 5 MINUTOS
+                # MÓDULO ANALISTA (IA): LEITURA DE FOTOS A CADA 5 MINUTOS E TEXTO A CADA 1 MINUTO
                 # ======================================================================
+                minuto_atual = datetime.now().minute
+                
+                # CICLO DE 15 SEGUNDOS: Apenas monitora, não chama a IA
+                if minuto_atual == ultimo_minuto_ia:
+                    # Apenas avisa o frontend que está vivo e monitorando
+                    await broadcast_to_frontend({
+                        "id": str(datetime.now().timestamp()),
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "type": "info",
+                        "message": f"[{ativo}] Monitorando armadilhas e trailing stops... (Aguardando fechamento do candle M1)"
+                    })
+                    await asyncio.sleep(15)
+                    continue
+                
+                # CICLO DE 60 SEGUNDOS: Chama a IA
+                ultimo_minuto_ia = minuto_atual
+                
                 dados_ontem = mt5_service.obter_ohlc_ontem(ativo) or {}
                 relevancia_anterior = memoria_relevancia.get(profile_id, 1)
                 estado_anterior_ia = memoria_estado_ia.get(profile_id, "Iniciando...")
                 
                 # Controle Inteligente de Visão Computacional (Economiza Latência)
-                minuto_atual = datetime.now().minute
                 enviar_fotos = (minuto_atual % 5 == 0) # Gera foto nos minutos: 0, 5, 10, 15, 20...
                 
                 caminho_foto_m5, caminho_foto_m1 = None, None
@@ -278,10 +319,26 @@ async def trading_loop():
 
                 # Armazena nova armadilha que a IA definir
                 nova_armadilha = analise.get('ordem_programada', {"acao": "NONE"})
+                nova_armadilha["motivo_ia"] = analise.get('motivo', 'Motivo não especificado.')
 
-                # Salva o Timestamp para o Timeout apenas se a armadilha for válida
+                # Salva o Timestamp para o Timeout apenas se a armadilha for válida (Com Trava Anti-Alucinação)
                 if nova_armadilha.get("acao") != "NONE":
-                    nova_armadilha["timestamp"] = time_lib.time()
+                    gatilho_ia = float(nova_armadilha.get("preco_gatilho", 0))
+                    acao_ia = nova_armadilha.get("acao")
+                    
+                    # Sanitização: O gatilho não pode estar a mais de 1.5% de distância do preço atual
+                    distancia_percentual = abs(gatilho_ia - preco_atual_log) / preco_atual_log if preco_atual_log > 0 else 1
+                    
+                    # TRAVA DE AÇO MATEMÁTICA: BUY Stop deve ser > Preço Atual | SELL Stop deve ser < Preço Atual
+                    direcao_invalida = (acao_ia == "BUY" and gatilho_ia <= preco_atual_log) or \
+                                       (acao_ia == "SELL" and gatilho_ia >= preco_atual_log)
+                    
+                    if distancia_percentual > 0.015 or gatilho_ia <= 0 or direcao_invalida:
+                        print(f"⚠️ [ANTI-ALUCINAÇÃO] Gatilho ignorado ({gatilho_ia} para {acao_ia}). Distância irreal ou direção inválida (Preço Atual: {preco_atual_log}).")
+                        nova_armadilha = {"acao": "NONE"}
+                    else:
+                        nova_armadilha["timestamp"] = time_lib.time()
+                        nova_armadilha["preco_gatilho"] = gatilho_ia # Garante que é float
                     
                 memoria_ordem_programada[profile_id] = nova_armadilha
 
@@ -316,6 +373,14 @@ async def trading_loop():
                             await log_to_supabase(profile_id, "trade", f"{tag}Ordem {decisao} via {estrategia_escolhida}")
                             await save_trade_history(profile_id, resultado.order, ativo, decisao, resultado.price, motivo)
                             
+                            msg_execucao_mercado = f"[{ativo}] ⚡ ORDEM A MERCADO {decisao} EXECUTADA!\n🧠 Raciocínio da IA: {motivo}"
+                            await broadcast_to_frontend({
+                                "id": str(datetime.now().timestamp()),
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "type": "info",
+                                "message": msg_execucao_mercado
+                            })
+                            
                             await broadcast_to_frontend({
                                 "type": "trade",
                                 "marker": {
@@ -337,7 +402,8 @@ async def trading_loop():
                     "type": "ai_analysis",
                     "message": log_msg,
                     "estudos_visuais": analise.get('estudos_visuais', {}),
-                    "relevancia": nova_relevancia
+                    "relevancia": nova_relevancia,
+                    "armadilha": nova_armadilha
                 })
 
             # Aguarda o próximo ciclo (15 segundos é ideal para micro-tendências)

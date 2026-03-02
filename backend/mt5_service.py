@@ -177,6 +177,17 @@ class MT5Service:
         # REQUISIÇÃO ROBUSTA (CORRIGIDA A SINTAXE)
         type_filling_val = mt5.ORDER_FILLING_RETURN if "11" in ativo or symbol_info.exchange else mt5.ORDER_FILLING_FOK
         
+        # --- SLIPPAGE DINÂMICO (DEVIATION) ---
+        # B3 (WIN/WDO) exige margens diferentes de Forex para evitar rejeição em volatilidade
+        if "WIN" in ativo.upper():
+            deviation_pts = 150  # 30 ticks (150 pontos) no índice
+        elif "WDO" in ativo.upper():
+            deviation_pts = 10   # 20 ticks (10 pontos) no dólar
+        elif "BIT" in ativo.upper():
+            deviation_pts = 500  # Volatilidade cripto B3
+        else:
+            deviation_pts = 20   # Padrão Forex/Outros
+        
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": ativo,
@@ -185,7 +196,7 @@ class MT5Service:
             "price": round(price, digits),
             "sl": round(sl, digits),    # Arredondamento dinâmico para evitar rejeição
             "tp": round(tp, digits),    # Essencial para ETFs como BITH11
-            "deviation": 20,
+            "deviation": deviation_pts,
             "magic": 123456,
             "comment": "Consists Trade AI - Sniper V4",
             "type_time": mt5.ORDER_TIME_GTC,

@@ -97,6 +97,45 @@ class AITrader:
             "min_recente_m5": min_recente
         }
 
+    def _formatar_candles_raio_x(self, df, num_candles):
+        """Formata os candles fechados com cálculo exato de pavios para a IA."""
+        if df is None or df.empty or len(df) < 2: return "N/A"
+        # Remove o candle atual (aberto) e pega os últimos 'num_candles'
+        df_closed = df.iloc[:-1].tail(num_candles)
+        linhas = []
+        for _, row in df_closed.iterrows():
+            tempo = row['time'].strftime('%H:%M') if isinstance(row['time'], pd.Timestamp) else pd.to_datetime(row['time'], unit='s').strftime('%H:%M')
+            o, h, l, c = row['open'], row['high'], row['low'], row['close']
+            pavio_sup = h - max(o, c)
+            pavio_inf = min(o, c) - l
+            linhas.append(f"[Tempo: {tempo} | Abertura: {o:.5f} | Max: {h:.5f} | Min: {l:.5f} | Fechamento: {c:.5f} | Pavio Sup: {pavio_sup:.5f} | Pavio Inf: {pavio_inf:.5f}]")
+        return "\n".join(linhas)
+
+    def _encontrar_pivots(self, df, num_pivots=3):
+        """Encontra os últimos topos e fundos confirmados (Pivot Points)."""
+        if df is None or len(df) < 10: return "N/A"
+        highs = df['high'].values
+        lows = df['low'].values
+        times = df['time'].values
+        
+        topos = []
+        fundos = []
+        
+        for i in range(2, len(df) - 2):
+            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                t = times[i]
+                t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
+                topos.append(f"{highs[i]:.5f} ({t_str})")
+            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                t = times[i]
+                t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
+                fundos.append(f"{lows[i]:.5f} ({t_str})")
+                
+        topos_str = ", ".join(topos[-num_pivots:]) if topos else "Nenhum topo claro"
+        fundos_str = ", ".join(fundos[-num_pivots:]) if fundos else "Nenhum fundo claro"
+        
+        return f"Topos: {topos_str} | Fundos: {fundos_str}"
+
     def analisar_mercado(self, dados_macro_df, dados_micro_df, estrategia: str, relevancia_anterior: int, dados_ontem: dict, estado_anterior: str = "", image_path_m1: str = None, image_path_m5: str = None) -> dict:
         """
         BRAIN V8.0 - HEDGE FUND MODE (Fotos a cada 5m + Ordens Programadas)
@@ -130,6 +169,12 @@ class AITrader:
         
         contexto_ontem = f"MAX: {dados_ontem.get('maxima_ontem')} | MIN: {dados_ontem.get('minima_ontem')} | FECH: {dados_ontem.get('fechamento_ontem')}" if dados_ontem else "Sem dados de ontem."
 
+        # RAIO-X FRACTAL (Pré-Processamento para a IA)
+        raio_x_m1 = self._formatar_candles_raio_x(df_m1, 30)
+        raio_x_m5 = self._formatar_candles_raio_x(df_m5, 12)
+        pivots_m1 = self._encontrar_pivots(df_m1, 3)
+        pivots_m5 = self._encontrar_pivots(df_m5, 3)
+
         # 3. CONSTRUÇÃO DO CÉREBRO DA IA (ESTRUTURA HEDGE FUND)
         system_instruction = f"""
         Você é um Quant Trader Sênior Híbrido operando como 'Camaleão Dinâmico' Multimodal (Lê Texto, Números e IMAGENS).
@@ -153,8 +198,11 @@ class AITrader:
                 "motivo_gatilho": "Breve motivo da armadilha"
             }},
             "estudos_visuais": {{
+                "suporte": 0.0,
+                "resistencia": 0.0,
+                "tendencia_direcao": "UP", "DOWN" ou "SIDEWAYS",
+                "tendencia_preco": 0.0,
                 "linhas_tendencia": [],
-                "suporte_resistencia": [],
                 "fibo_proposals": []
             }}
         }}
@@ -199,20 +247,18 @@ class AITrader:
         ---> SUA MEMÓRIA DO CICLO ANTERIOR: 
         "{estado_anterior}"
         
-        MAPA DE LIQUIDEZ:
+        MAPA DE LIQUIDEZ E PIVOTS:
         Níveis Ontem: {contexto_ontem}
-        Micro (M5 Recente): S:{stats.get('min_recente_m5')} / R:{stats.get('max_recente_m5')}
+        Pivots M5: {pivots_m5}
+        Pivots M1: {pivots_m1}
         Macro (M15): S:{sup_m15} / R:{res_m15}
         
-        HISTÓRICO FRACTAL (OHLCV RECENTE):
-        M15 (Parede Institucional): 
-        {df_m15.tail(3).to_string(index=False) if df_m15 is not None else 'N/A'}
+        RAIO-X FRACTAL (CANDLES FECHADOS COM PAVIOS):
+        M5 (Últimos 12 candles - Coração do Fluxo): 
+        {raio_x_m5}
         
-        M5 (Coração do Fluxo): 
-        {df_m5.tail(5).to_string(index=False) if df_m5 is not None else 'N/A'}
-        
-        M1 (Gatilho): 
-        {df_m1.tail(5).to_string(index=False) if df_m1 is not None else 'N/A'}
+        M1 (Últimos 30 candles - Gatilho): 
+        {raio_x_m1}
 
         LEIA OS DADOS E OLHE A IMAGEM DO GRÁFICO (Se anexada). Defina uma Armadilha de Rompimento ("ordem_programada") ou execute a mercado se o gatilho já estourou. Gere o JSON estrito.
         """

@@ -4,18 +4,23 @@ import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType, ISeriesApi, CandlestickData, Time, LineStyle, SeriesMarker } from 'lightweight-charts';
 
 export interface VisualStudies {
-  linhas_tendencia?: { id: string; p1: { time: string; price: number }; p2: { time: string; price: number } }[];
-  suporte_resistencia?: any[]; // Alterado para any para aceitar objetos da IA antes da sanitização
-  fibo_proposals?: any[];      // Alterado para any para aceitar objetos da IA antes da sanitização
+  linhas_tendencia?: any[];
+  suporte_resistencia?: any[];
+  fibo_proposals?: any[];
+  suporte?: number;
+  resistencia?: number;
+  tendencia_direcao?: 'UP' | 'DOWN' | 'SIDEWAYS';
+  tendencia_preco?: number;
 }
 
 interface TradingChartProps {
   data: CandlestickData<Time>[];
   visualStudies?: VisualStudies;
   markers?: SeriesMarker<Time>[];
+  armadilha?: { acao: string; preco_gatilho: number };
 }
 
-export default function TradingChart({ data, visualStudies, markers = [] }: TradingChartProps) {
+export default function TradingChart({ data, visualStudies, markers = [], armadilha }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const chartRef = useRef<any>(null);
@@ -94,12 +99,45 @@ export default function TradingChart({ data, visualStudies, markers = [] }: Trad
     }
   }, [data]);
 
-  // 3. Efeito para as Setas de Compra/Venda (Markers)
+  // 3. Efeito para as Setas de Compra/Venda (Markers) e Tendência da IA
   useEffect(() => {
-    if (seriesRef.current) {
-      seriesRef.current.setMarkers(markers);
+    if (!seriesRef.current) return;
+    
+    let combinedMarkers = [...markers];
+    
+    // Adiciona o marcador de tendência da IA (LTA/LTB)
+    if (visualStudies?.tendencia_direcao && data.length > 0) {
+      const lastTime = data[data.length - 1].time;
+      if (visualStudies.tendencia_direcao === 'UP') {
+        combinedMarkers.push({
+          time: lastTime,
+          position: 'belowBar',
+          color: '#10b981',
+          shape: 'arrowUp',
+          text: 'LTA (IA)',
+          size: 2,
+        });
+      } else if (visualStudies.tendencia_direcao === 'DOWN') {
+        combinedMarkers.push({
+          time: lastTime,
+          position: 'aboveBar',
+          color: '#ef4444',
+          shape: 'arrowDown',
+          text: 'LTB (IA)',
+          size: 2,
+        });
+      }
     }
-  }, [markers]);
+    
+    // Ordena marcadores por tempo para evitar erros do Lightweight Charts
+    combinedMarkers.sort((a, b) => {
+      const timeA = typeof a.time === 'string' ? new Date(a.time).getTime() : a.time as number;
+      const timeB = typeof b.time === 'string' ? new Date(b.time).getTime() : b.time as number;
+      return timeA - timeB;
+    });
+    
+    seriesRef.current.setMarkers(combinedMarkers);
+  }, [markers, visualStudies, data]);
 
   // 4. Efeito para Linhas da IA (Suporte, Resistência e Fibo) com Sanitização
   useEffect(() => {
@@ -130,6 +168,32 @@ export default function TradingChart({ data, visualStudies, markers = [] }: Trad
       });
     }
 
+    // Desenha Suporte Específico
+    if (visualStudies.suporte && visualStudies.suporte > 0) {
+      const line = series.createPriceLine({
+        price: visualStudies.suporte,
+        color: '#10b981', 
+        lineWidth: 2,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: 'SUPORTE (IA)',
+      });
+      priceLinesRef.current.push(line);
+    }
+
+    // Desenha Resistência Específica
+    if (visualStudies.resistencia && visualStudies.resistencia > 0) {
+      const line = series.createPriceLine({
+        price: visualStudies.resistencia,
+        color: '#ef4444', 
+        lineWidth: 2,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: 'RESISTÊNCIA (IA)',
+      });
+      priceLinesRef.current.push(line);
+    }
+
     // Desenha Fibonacci (Protegido contra objetos)
     if (visualStudies.fibo_proposals && Array.isArray(visualStudies.fibo_proposals)) {
       visualStudies.fibo_proposals.forEach(fibo => {
@@ -149,6 +213,31 @@ export default function TradingChart({ data, visualStudies, markers = [] }: Trad
       });
     }
   }, [visualStudies]);
+
+  // 5. Efeito para a Linha de Armadilha (Gatilho da IA)
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    const series = seriesRef.current;
+
+    // Remove a linha de armadilha anterior se existir
+    const existingTrapLine = priceLinesRef.current.find(l => l.options().title?.includes('GATILHO'));
+    if (existingTrapLine) {
+      series.removePriceLine(existingTrapLine);
+      priceLinesRef.current = priceLinesRef.current.filter(l => l !== existingTrapLine);
+    }
+
+    if (armadilha && armadilha.acao !== 'NONE' && armadilha.preco_gatilho > 0) {
+      const line = series.createPriceLine({
+        price: armadilha.preco_gatilho,
+        color: armadilha.acao === 'BUY' ? '#10b981' : '#ef4444', 
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `🎯 GATILHO ${armadilha.acao}`,
+      });
+      priceLinesRef.current.push(line);
+    }
+  }, [armadilha]);
 
   return (
     <div ref={chartContainerRef} className="w-full h-full absolute inset-0" />

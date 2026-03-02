@@ -50,6 +50,7 @@ manager = ConnectionManager()
 # --- CONFIGURAÇÕES GLOBAIS DE CONTROLE ---
 current_symbol = "EURUSD" # padrão inicial se no supabase não configurado outro
 replay_speed = 1.0
+force_config_reload = True # Flag para otimização de cache do banco
 
 # Configuração do CORS
 app.add_middleware(
@@ -92,6 +93,13 @@ async def select_asset(data: dict):
         print(f"--- COMANDO RECEBIDO: Trocando foco para {current_symbol} ---")
         return {"status": "success", "asset": current_symbol}
     return {"status": "error", "message": "Ativo não informado"}, 400
+
+@app.post("/api/reload_config")
+async def reload_config():
+    global force_config_reload
+    force_config_reload = True
+    print("--- COMANDO RECEBIDO: Recarregar Configurações do Supabase ---")
+    return {"status": "success"}
 
 @app.post("/api/set_replay_speed")
 async def set_speed(data: dict):

@@ -41,6 +41,7 @@ export default function CockpitPage() {
 
   // Estados Dinâmicos do Gráfico Financeiro
   const [visualStudies, setVisualStudies] = useState<VisualStudies | undefined>(undefined);
+  const [armadilhaAtiva, setArmadilhaAtiva] = useState<any>(null);
   const [chartData, setChartData] = useState<CandlestickData<Time>[]>([]);
   const [chartMarkers, setChartMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [currentAsset, setCurrentAsset] = useState<string>('CARREGANDO...');
@@ -147,8 +148,13 @@ export default function CockpitPage() {
           // 1. Tratamento de Logs e Análises (Cérebro)
           if (data.type !== 'market_data') {
             setAiLogs((prev) => [...prev, data]);
-            if (data.type === 'ai_analysis' && data.estudos_visuais) {
-              setVisualStudies(data.estudos_visuais);
+            if (data.type === 'ai_analysis') {
+              if (data.estudos_visuais) {
+                setVisualStudies(data.estudos_visuais);
+              }
+              if (data.armadilha) {
+                setArmadilhaAtiva(data.armadilha);
+              }
             }
           }
           
@@ -365,7 +371,7 @@ export default function CockpitPage() {
             </div>
           </div>
           <div className="flex-1 relative">
-            <TradingChart data={chartData} visualStudies={visualStudies} markers={chartMarkers} />
+            <TradingChart data={chartData} visualStudies={visualStudies} markers={chartMarkers} armadilha={armadilhaAtiva} />
           </div>
         </section>
 
