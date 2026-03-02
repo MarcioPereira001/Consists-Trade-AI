@@ -50,6 +50,7 @@ class AITrader:
         
         self.client = genai.Client(api_key=api_key)
         self.model_name = "gemini-2.5-flash-lite"
+        self.fallback_model_name = "gemini-2.5-flash"
         self.radar = NewsRadar()
 
     def _analise_estatistica_previa(self, df_m1, df_m5):
@@ -354,10 +355,33 @@ class AITrader:
             return json.loads(response.text)
             
         except Exception as e:
-            return {
-                "relevancia": 1, "decisao": "WAIT", 
-                "motivo": f"Erro IA Multimodal Dupla: {str(e)}",
-                "estado_operacional": f"Aguardando estabilidade. Erro na leitura visual dupla.", 
-                "ordem_programada": {"acao": "NONE", "preco_gatilho": 0.0, "motivo_gatilho": ""},
-                "estudos_visuais": {"suporte_resistencia": []}
-            }
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                print(f"⚠️ Modelo {self.model_name} indisponível (503). Tentando fallback para {self.fallback_model_name}...")
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.fallback_model_name,
+                        contents=contents_payload, 
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            response_mime_type="application/json",
+                            temperature=0.2
+                        )
+                    )
+                    return json.loads(response.text)
+                except Exception as fallback_e:
+                    print(f"❌ Erro no fallback: {fallback_e}")
+                    return {
+                        "relevancia": 1, "decisao": "WAIT", 
+                        "motivo": f"Erro IA Multimodal (Fallback): {str(fallback_e)}",
+                        "estado_operacional": f"Aguardando estabilidade. Erro na leitura visual dupla.", 
+                        "ordem_programada": {"acao": "NONE", "preco_gatilho": 0.0, "motivo_gatilho": ""},
+                        "estudos_visuais": {"suporte_resistencia": []}
+                    }
+            else:
+                return {
+                    "relevancia": 1, "decisao": "WAIT", 
+                    "motivo": f"Erro IA Multimodal Dupla: {str(e)}",
+                    "estado_operacional": f"Aguardando estabilidade. Erro na leitura visual dupla.", 
+                    "ordem_programada": {"acao": "NONE", "preco_gatilho": 0.0, "motivo_gatilho": ""},
+                    "estudos_visuais": {"suporte_resistencia": []}
+                }
