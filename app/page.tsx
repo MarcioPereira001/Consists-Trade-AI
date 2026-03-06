@@ -49,8 +49,8 @@ export default function CockpitPage() {
   // Função para sincronizar a troca de ativo com o Backend
   const syncAssetWithBackend = useCallback(async (asset: string) => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      await fetch(`${apiUrl}/api/select_asset`, {
+      // Usa a rota de proxy do Next.js para contornar o CORS/HTTPS e acessar o backend Python
+      await fetch(`/api/proxy/select_asset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ asset: asset }),

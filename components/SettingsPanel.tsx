@@ -152,8 +152,7 @@ export default function SettingsPanel({ isOpen, onClose, userId }: SettingsPanel
       
       // Avisa o backend para recarregar o cache imediatamente
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-        await axios.post(`${apiUrl}/api/reload_config`);
+        await axios.post(`/api/proxy/reload_config`);
       } catch (e) {
         console.warn("Aviso: Backend pode estar offline para recarregar config imediatamente.");
       }

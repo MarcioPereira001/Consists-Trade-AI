@@ -99,15 +99,22 @@ class AITrader:
         if df_m1 is None or len(df_m1) < 20: return {}
         
         # Volatilidade Dinâmica (ATR 14)
-        high_low = df_m1['high'] - df_m1['low']
-        atr = high_low.rolling(window=14).mean().iloc[-1]
+        if 'atr_14' in df_m1.columns and not pd.isna(df_m1['atr_14'].iloc[-1]):
+            atr = df_m1['atr_14'].iloc[-1]
+        else:
+            high_low = df_m1['high'] - df_m1['low']
+            atr = high_low.rolling(window=14).mean().iloc[-1]
         
-        # Regressão Linear M1
-        y_m1 = df_m1['close'].tail(15).values
-        x_m1 = np.arange(len(y_m1))
-        slope, intercept = np.polyfit(x_m1, y_m1, 1)
+        # Regressão Linear M5 (Tendência Principal - 3 Horas / 36 candles)
+        if df_m5 is not None and len(df_m5) >= 12:
+            num_candles = min(len(df_m5), 36)
+            y_m5 = df_m5['close'].tail(num_candles).values
+            x_m5 = np.arange(len(y_m5))
+            slope_m5, _ = np.polyfit(x_m5, y_m5, 1)
+        else:
+            slope_m5 = 0
 
-        # Momentum de Curto Prazo (Últimos 5 candles M1 - Para o Camaleão)
+        # Momentum de Curto Prazo (Últimos 5 candles M1 - Para o Camaleão / Gatilho)
         y_m1_fast = df_m1['close'].tail(5).values
         x_m1_fast = np.arange(len(y_m1_fast))
         slope_rapido, _ = np.polyfit(x_m1_fast, y_m1_fast, 1)
@@ -129,12 +136,12 @@ class AITrader:
 
         return {
             "atr": round(atr, 5),
-            "direcao_slope": "ALTA (Bullish)" if slope > 0 else "BAIXA (Bearish)",
-            "forca_tendencia": "ALTA (Institucional)" if abs(slope) > (atr * 0.4) else "BAIXA (Consolidação)",
-            "intensidade_slope": round(slope, 6),
+            "direcao_slope_m5": "ALTA (Bullish)" if slope_m5 > 0 else "BAIXA (Bearish)",
+            "forca_tendencia_m5": "ALTA (Institucional)" if abs(slope_m5) > (atr * 0.1) else "BAIXA (Consolidação)",
+            "intensidade_slope_m5": round(slope_m5, 6),
             "volume_status": esforco,
-            "direcao_imediata": "COLAPSO / QUEDA FORTE" if slope_rapido < -atr else ("EXPLOSÃO / ALTA FORTE" if slope_rapido > atr else "CONSOLIDAÇÃO"),
-            "aceleracao_slope": round(slope_rapido, 6),
+            "direcao_imediata_m1": "COLAPSO / QUEDA FORTE" if slope_rapido < -atr else ("EXPLOSÃO / ALTA FORTE" if slope_rapido > atr else "CONSOLIDAÇÃO"),
+            "aceleracao_slope_m1": round(slope_rapido, 6),
             "max_recente_m5": max_recente,
             "min_recente_m5": min_recente
         }
@@ -154,8 +161,9 @@ class AITrader:
             # Adiciona RSI e Estocástico se existirem no DataFrame
             rsi = f" | RSI: {row['rsi_14']:.1f}" if 'rsi_14' in row else ""
             stoch = f" | StochK: {row['stoch_k']:.1f}" if 'stoch_k' in row else ""
+            vwap = f" | VWAP: {row['vwap']:.5f}" if 'vwap' in row else ""
             
-            linhas.append(f"[Tempo: {tempo} | Abertura: {o:.5f} | Max: {h:.5f} | Min: {l:.5f} | Fechamento: {c:.5f} | Pavio Sup: {pavio_sup:.5f} | Pavio Inf: {pavio_inf:.5f}{rsi}{stoch}]")
+            linhas.append(f"[Tempo: {tempo} | Abertura: {o:.5f} | Max: {h:.5f} | Min: {l:.5f} | Fechamento: {c:.5f} | Pavio Sup: {pavio_sup:.5f} | Pavio Inf: {pavio_inf:.5f}{rsi}{stoch}{vwap}]")
         return "\n".join(linhas)
 
     def _encontrar_pivots(self, df, num_pivots=3):
@@ -224,7 +232,7 @@ class AITrader:
         
         return f"Estrutura: {estrutura} | Topos: {topos_str} | Fundos: {fundos_str}"
 
-    def analisar_mercado(self, dados_macro_df, dados_micro_df, estrategia: str, relevancia_anterior: int, dados_ontem: dict, estado_anterior: str = "", image_path_m1: str = None, image_path_m5: str = None) -> dict:
+    def analisar_mercado(self, dados_macro_df, dados_micro_df, estrategia: str, relevancia_anterior: int, dados_ontem: dict, estado_anterior: str = "", image_path_m1: str = None, image_path_m5: str = None, posicao_aberta: dict = None) -> dict:
         """
         BRAIN V8.0 - HEDGE FUND MODE (Fotos a cada 5m + Ordens Programadas)
         """
@@ -250,16 +258,49 @@ class AITrader:
         # 2. INTELIGÊNCIA MATEMÁTICA E MÉTRICAS
         stats = self._analise_estatistica_previa(df_m1, df_m5)
         preco_atual = df_m1['close'].iloc[-1]
+        vwap_atual = df_m1['vwap'].iloc[-1] if 'vwap' in df_m1.columns else preco_atual
+        atr_atual = stats.get('atr', 0)
+        
+        # --- ANÁLISE DE GAP E SESSÃO ---
+        gap_info = "Sem dados de gap."
+        sessao_info = "Sessão em andamento."
+        
+        if dados_ontem and df_m1 is not None and not df_m1.empty:
+            fechamento_ontem = dados_ontem.get('fechamento_ontem')
+            
+            # Tenta pegar a data do último candle para saber qual é o "hoje" do gráfico
+            data_atual_grafico = df_m1['time'].iloc[-1].date()
+            df_hoje = df_m1[df_m1['time'].dt.date == data_atual_grafico]
+            
+            if not df_hoje.empty:
+                abertura_hoje = df_hoje['open'].iloc[0]
+                
+                if fechamento_ontem and fechamento_ontem > 0:
+                    gap_pct = ((abertura_hoje - fechamento_ontem) / fechamento_ontem) * 100
+                    if abs(gap_pct) > 0.05: # Gap relevante
+                        direcao_gap = "ALTA" if gap_pct > 0 else "BAIXA"
+                        gap_info = f"GAP DE {direcao_gap} ({gap_pct:.2f}%). Fechamento Ontem: {fechamento_ontem} -> Abertura Hoje: {abertura_hoje}"
+                    else:
+                        gap_info = f"Sem Gap relevante ({gap_pct:.2f}%)."
+                
+                tempo_primeiro_candle = df_hoje['time'].iloc[0]
+                tempo_ultimo_candle = df_m1['time'].iloc[-1]
+                minutos_desde_abertura = (tempo_ultimo_candle - tempo_primeiro_candle).total_seconds() / 60
+                
+                if minutos_desde_abertura <= 60:
+                    sessao_info = f"INÍCIO DE PREGÃO (Aberto há {int(minutos_desde_abertura)} min). ATENÇÃO: Alta volatilidade, falsos rompimentos e formação de nova tendência."
+                else:
+                    sessao_info = f"PREGÃO EM ANDAMENTO (Aberto há {int(minutos_desde_abertura/60)}h {int(minutos_desde_abertura%60)}m)."
         
         # Zonas de Liquidez
         sup_m15 = df_m15['low'].min() if df_m15 is not None and not df_m15.empty else 0
         res_m15 = df_m15['high'].max() if df_m15 is not None and not df_m15.empty else 0
         
-        contexto_ontem = f"MAX: {dados_ontem.get('maxima_ontem')} | MIN: {dados_ontem.get('minima_ontem')} | FECH: {dados_ontem.get('fechamento_ontem')}" if dados_ontem else "Sem dados de ontem."
+        contexto_ontem = f"MÁXIMA: {dados_ontem.get('maxima_ontem')} | MÍNIMA: {dados_ontem.get('minima_ontem')} | FECHAMENTO: {dados_ontem.get('fechamento_ontem')}" if dados_ontem else "Sem dados de ontem."
 
         # RAIO-X FRACTAL (Pré-Processamento para a IA)
         raio_x_m1 = self._formatar_candles_raio_x(df_m1, 30)
-        raio_x_m5 = self._formatar_candles_raio_x(df_m5, 12)
+        raio_x_m5 = self._formatar_candles_raio_x(df_m5, 36)
         pivots_m1 = self._encontrar_pivots(df_m1, 3)
         pivots_m5 = self._encontrar_pivots(df_m5, 3)
 
@@ -271,7 +312,7 @@ class AITrader:
         ESTRUTURA DE DADOS OBRIGATÓRIA (Siga o JSON estritamente):
         {{
             "relevancia": inteiro de 1 a 5,
-            "decisao": "WAIT", "WAIT_TO_BUY", "WAIT_TO_SELL", "BUY" ou "SELL",
+            "decisao": "WAIT", "WAIT_TO_BUY", "WAIT_TO_SELL", "BUY", "SELL", "HOLD", ou "BREAKEVEN",
             "motivo": "Explicação do momento.",
             "regime_mercado": "Ex: Colapso M1 / Consolidação M15",
             "estrategia_escolhida": "Nome do sub-modo ativado",
@@ -294,16 +335,42 @@ class AITrader:
                 "fibo_proposals": []
             }}
         }}
+        
+        --- INSTRUÇÕES BÁSICAS DE OPERACIONAL DO MERCADO ---
+        0. REGRA DE TENDÊNCIA (CRÍTICA): A TENDÊNCIA (Direção de Compra ou Venda) DEVE SER DEFINIDA EXCLUSIVAMENTE PELO GRÁFICO M5. Analise os topos e fundos maiores/menores das últimas 3 horas (últimos 36 candles do M5). O Gráfico M1 serve APENAS para confirmar rompimentos e refinar o timing de entrada (gatilho), NUNCA para definir a tendência. Se o M5 diz ALTA, você só procura COMPRA no M1. Se o M5 diz BAIXA, você só procura VENDA no M1.
+        1. A LEI DA VWAP (VOLUME WEIGHTED AVERAGE PRICE): Institucionais operam pela VWAP. 
+           - NUNCA compre se o preço estiver ABAIXO da VWAP.
+           - NUNCA venda se o preço estiver ACIMA da VWAP.
+           - A VWAP atua como um ímã (Mean Reversion) e como suporte/resistência dinâmico.
+        2. VOLATILIDADE E STOP LOSS (ATR): O ATR (Average True Range) mede a volatilidade real.
+           - Use o ATR atual ({atr_atual:.5f}) para definir o Stop Loss. Exemplo: Stop Loss = 1.5x ATR.
+           - Se o ATR estiver muito alto, exija confirmações mais fortes antes de entrar.
+        3. ZONAS DE LIQUIDEZ (D-1): As Máximas e Mínimas do dia anterior são piscinas de liquidez.
+           - Comprar exatamente em cima da Máxima de ontem é suicídio (armadilha de liquidez).
+           - Vender exatamente em cima da Mínima de ontem é suicídio.
+           - Espere o rompimento claro ou a rejeição nessas zonas.
+        4. SUPORTE E RESISTÊNCIA (S/R): 
+         * Suporte (S): É sempre a base (parte de baixo) do movimento que forma topos e fundos.
+         * Resistência (R): É sempre o teto (parte de cima) do movimento que forma topos e fundos.
+        5. PullBack: Estratégia de operar a favor da tendência buscando maior margem quando acontece uma correção (recuo) tocando S/R e entrando a favor da tendência.
+        6. LINHAS DE TENDÊNCIA:
+         * LTA (Linha de Tendência de Alta): Linha base dos candles de fundos cada vez mais altos/baixos (sempre na tendência atual), ela forma entre o último Suporte após romper, e o último Suporte atual.
+         * LTB (Linha de Tendência de Baixa): Linha teto dos candles de topos cada vez mais baixos/altos (sempre na tendência atual), ela forma entre a última Resistência após romper, e a última resistência atual.
+         * Conceito de LTA + LTB: Quando o mercado está perdendo a força entre tendência ou lateralização, usa-se as 2 linhas para identificar onde o mercado vai se romper LTA ou LTB.
 
         --- 🚨 A LEI DO PULLBACK E O PERIGO DA REVERSÃO 🚨 ---
-        REGRA DE OURO: Você é ESTRITAMENTE PROIBIDO de emitir "BUY" ou "SELL" no topo/fundo de um rompimento esticado.
+        REGRA DE OURO: Você é ESTRITAMENTE PROIBIDO de emitir ORDEM DE "BUY" ou "SELL" no topo/fundo de um rompimento esticado e arme gatilho pegando o último S/R do micro movimento (sempre a favor da tendência macro).
+        OBJETIVO: MAIOR MARGEM, MAIS ASSERTIVIDADE E TIMING CERTO!
         O SEU PROTOCOLO É O SEGUINTE:
-        1. ALINHAMENTO MACRO: Opere a favor da tendência (rompimento da Máx/Mín do dia). Identificou o rompimento? Emita "WAIT_TO_BUY" ou "WAIT_TO_SELL" e não faça nada.
-        2. ESPERE O PULLBACK: Aguarde o preço voltar para testar a linha rompida ou as médias móveis (Amarela/Azul).
-        3. O USO DA ARMADILHA (ORDEM PROGRAMADA): Quando o preço estiver se aproximando da zona de reteste (S/R), você DEVE usar o campo "ordem_programada" para armar a sua entrada (BUY/SELL) no preço exato do Suporte/Resistência. O robô executará automaticamente se houver rejeição (pavio) na zona.
-        4. ⚠️ ALERTA DE REVERSÃO (O FALSO PULLBACK): Analise o contexto! Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu. Nesse caso, mantenha a armadilha em "NONE" e a decisão em "WAIT".
-        5. EXECUÇÃO A MERCADO (SNIPER): Só emita "BUY" ou "SELL" direto se o preço JÁ ESTIVER na zona de Suporte/Resistência e JÁ TIVER DEIXADO um padrão claro de rejeição (pavio, doji, martelo) a seu favor.
-        6. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro. Exemplo: O mercado vinha caindo (LH/LL), mas agora rompeu o último topo menor (LH) E formou um fundo maior (HL). Só a partir daí você pode armar compras.
+        1. ANALISE MAIS E ENTRE MENOS: Busque entrar nas operações de maiores probabilidades, NÃO DEDUZA, espere "WAIT" até ter CERTEZA.
+        2. ALINHAMENTO MACRO: Opere a favor da tendência (rompimento da Máx/Mín do dia). Identificou o rompimento? Emita "WAIT_TO_BUY" ou "WAIT_TO_SELL" e não faça nada.
+        3. ESPERE O PULLBACK: Aguarde o preço voltar para testar a linha rompida ou as médias móveis (Amarela/Azul).
+        4. O USO DA ARMADILHA (ORDEM PROGRAMADA): Quando o preço estiver se aproximando da zona de reteste (S/R), você DEVE usar o campo "ordem_programada" para armar a sua entrada (BUY/SELL) no preço exato do Suporte/Resistência. O robô executará automaticamente se houver rejeição (pavio) na zona.
+        5. ⚠️ ALERTA DE REVERSÃO (O FALSO PULLBACK): Analise o contexto! Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu. Nesse caso, mantenha a armadilha em "NONE" e a decisão em "WAIT".
+        6. EXECUÇÃO A MERCADO (SNIPER): Só emita "BUY" ou "SELL" direto se o preço JÁ ESTIVER na zona de Suporte/Resistência e JÁ TIVER DEIXADO um padrão claro de rejeição (pavio, doji, martelo) a seu favor.
+        7. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro. Exemplo: O mercado vinha caindo (LH/LL), mas agora rompeu o último topo menor (LH) E formou um fundo maior (HL). Só a partir daí você pode armar compras.
+        8. USAR LTA + LTB QUANDO MERCADO ESTIVER MUITO DÚVIDOSO SEM FORÇA PARA VOLTAR A OPERAR, AGUARDE APÓS CONFIRMAÇÃO CONCRETA, ENQUANTO NÃO ROMPER MANTENHA "WAIT".
+        9. TRAILLING STOP ÁGIL: Perceba as mudanças que pode dar loss e coloque o gain para 0 a 0 para se voltar o movimento dá tempo de reverter a perda, "decisao": "HOLD" (manter trade) ou "BREAKEVEN" (colocar no 0 a 0).
 
         --- ⚖️ MODO SCALPER (LATERALIZAÇÃO) ⚖️ ---
         Se a estrutura do mercado for "LATERALIZAÇÃO (Consolidação)":
@@ -339,8 +406,15 @@ class AITrader:
         prompt = f"""
         ANÁLISE HÍBRIDA (DADOS + IMAGEM) EM TEMPO REAL.
         Estratégia: {estrategia} | Preço Atual: {preco_atual}
-        Status Quant: Tendência {stats.get('direcao_slope')} | Volume {stats.get('volume_status')}
-        Direção Micro Imediata: {stats.get('direcao_imediata')} (Aceleração: {stats.get('aceleracao_slope')})
+        STATUS DA POSIÇÃO: {f"ABERTA -> {posicao_aberta['type']} no preço {posicao_aberta['price_open']} (Lucro: {posicao_aberta['profit']})" if posicao_aberta else "NENHUMA (Aguardando nova entrada)"}
+        
+        Status Quant: Tendência M5 {stats.get('direcao_slope_m5')} | Volume {stats.get('volume_status')}
+        Direção Micro Imediata M1: {stats.get('direcao_imediata_m1')} (Aceleração: {stats.get('aceleracao_slope_m1')})
+        VWAP Atual: {vwap_atual:.5f} | ATR Atual: {atr_atual:.5f}
+        
+        CONTEXTO DE SESSÃO E GAP:
+        Sessão: {sessao_info}
+        Gap Hoje: {gap_info}
         
         ---> SUA MEMÓRIA DO CICLO ANTERIOR: 
         "{estado_anterior}"
@@ -352,7 +426,7 @@ class AITrader:
         Macro (M15): S:{sup_m15} / R:{res_m15}
         
         RAIO-X FRACTAL (CANDLES FECHADOS COM PAVIOS):
-        M5 (Últimos 12 candles - Coração do Fluxo): 
+        M5 (Últimos 36 candles - Coração do Fluxo): 
         {raio_x_m5}
         
         M1 (Últimos 30 candles - Gatilho): 

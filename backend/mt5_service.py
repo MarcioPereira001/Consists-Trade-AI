@@ -59,10 +59,26 @@ class MT5Service:
         df['stoch_k'] = 100 * ((df['close'] - low_14) / (high_14 - low_14))
         df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
         
-        # Preenche NaNs iniciais com 50 (neutro) para evitar quebra na IA
-        df.fillna({'rsi_14': 50, 'stoch_k': 50, 'stoch_d': 50}, inplace=True)
+        # 3. ATR (Average True Range) - Período 14
+        df['prev_close'] = df['close'].shift(1)
+        df['tr1'] = df['high'] - df['low']
+        df['tr2'] = abs(df['high'] - df['prev_close'])
+        df['tr3'] = abs(df['low'] - df['prev_close'])
+        df['tr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
+        df['atr_14'] = df['tr'].rolling(window=14).mean()
+
+        # 4. VWAP (Volume Weighted Average Price) Diária
+        df['date'] = df['time'].dt.date
+        df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
+        df['tp_vol'] = df['typical_price'] * df['tick_volume']
+        df['cum_vol'] = df.groupby('date')['tick_volume'].cumsum()
+        df['cum_tp_vol'] = df.groupby('date')['tp_vol'].cumsum()
+        df['vwap'] = df['cum_tp_vol'] / df['cum_vol']
         
-        return df[['time', 'open', 'high', 'low', 'close', 'tick_volume', 'rsi_14', 'stoch_k', 'stoch_d']]
+        # Preenche NaNs iniciais com 50 (neutro) para evitar quebra na IA
+        df.fillna({'rsi_14': 50, 'stoch_k': 50, 'stoch_d': 50, 'atr_14': 0, 'vwap': df['close']}, inplace=True)
+        
+        return df[['time', 'open', 'high', 'low', 'close', 'tick_volume', 'rsi_14', 'stoch_k', 'stoch_d', 'atr_14', 'vwap']]
 
     def obter_ohlc_ontem(self, ativo: str):
         """

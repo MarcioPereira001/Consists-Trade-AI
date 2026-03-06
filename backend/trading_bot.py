@@ -183,13 +183,29 @@ async def trading_loop():
                 preco_maxima_anterior = float(df_micro.iloc[-2]['high'])
                 preco_minima_anterior = float(df_micro.iloc[-2]['low'])
                 timestamp_atual = int(df_micro.iloc[-1]['time'].timestamp() if hasattr(df_micro.iloc[-1]['time'], 'timestamp') else df_micro.iloc[-1]['time'])
+                
+                atr_atual = df_micro['atr_14'].iloc[-1] if 'atr_14' in df_micro.columns else 0
+
+                # --- CÁLCULO DE SL E TP DINÂMICOS (BASEADO NO ATR) ---
+                symbol_info = mt5.symbol_info(ativo)
+                point = symbol_info.point if symbol_info else 1.0
+                
+                if atr_atual > 0 and point > 0:
+                    atr_pts = atr_atual / point
+                    sl_dinamico_pts = int(atr_pts * 1.5)
+                    tp_dinamico_pts = int(atr_pts * 2.0)
+                else:
+                    sl_dinamico_pts = sl_pts
+                    tp_dinamico_pts = tp_pts
 
                 # --- PROTEÇÃO DINÂMICA CONTRA ERRO 10016 ---
-                sl_real = sl_pts
-                tp_real = tp_pts
+                # Usa o maior valor entre o SL fixo (banco) e o SL dinâmico (ATR) para garantir proteção
+                sl_real = max(sl_pts, sl_dinamico_pts)
+                tp_real = max(tp_pts, tp_dinamico_pts)
+                
                 if 'BIT' in ativo.upper():
-                    sl_real = max(sl_pts, 1500) 
-                    tp_real = max(tp_pts, 3000)
+                    sl_real = max(sl_real, 1500) 
+                    tp_real = max(tp_real, 3000)
 
                 # ======================================================================
                 # MÓDULO EXECUTOR (LATÊNCIA ZERO): EXECUÇÃO DE ARMADILHA
@@ -350,6 +366,18 @@ async def trading_loop():
                 # Medidor de Latência da IA
                 start_time = time_lib.time()
                 
+                # Obtém o status da posição atual para passar para a IA
+                posicao_aberta = None
+                if ambiente != 'REPLAY HISTÓRICO':
+                    posicoes = mt5.positions_get(symbol=ativo)
+                    if posicoes:
+                        pos = posicoes[0]
+                        posicao_aberta = {
+                            "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
+                            "price_open": pos.price_open,
+                            "profit": pos.profit
+                        }
+                
                 analise = ai_trader.analisar_mercado(
                     dados_macro_df=pacote_dados["m15"], 
                     dados_micro_df=pacote_dados,       
@@ -358,7 +386,8 @@ async def trading_loop():
                     dados_ontem=dados_ontem,
                     estado_anterior=estado_anterior_ia,
                     image_path_m1=caminho_foto_m1, 
-                    image_path_m5=caminho_foto_m5  
+                    image_path_m5=caminho_foto_m5,
+                    posicao_aberta=posicao_aberta
                 )
                 
                 tempo_ia = time_lib.time() - start_time
@@ -449,6 +478,42 @@ async def trading_loop():
                             })
                         else:
                             await log_to_supabase(profile_id, "error", f"Falha ao executar ordem {decisao} para {ativo}.")
+                            
+                elif decisao == 'BREAKEVEN' and posicao_aberta:
+                    if ambiente != 'REPLAY HISTÓRICO':
+                        # Lógica para mover o Stop Loss para o preço de entrada (Breakeven)
+                        try:
+                            posicoes = mt5.positions_get(symbol=ativo)
+                            if posicoes:
+                                pos = posicoes[0]
+                                preco_entrada = pos.price_open
+                                sl_atual = pos.sl
+                                
+                                # Só ajusta se o SL atual for diferente da entrada
+                                if abs(sl_atual - preco_entrada) > 0.00001: 
+                                    request = {
+                                        "action": mt5.TRADE_ACTION_SLTP,
+                                        "symbol": ativo,
+                                        "sl": preco_entrada,
+                                        "tp": pos.tp,
+                                        "position": pos.ticket
+                                    }
+                                    result = mt5.order_send(request)
+                                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                                        print(f"🛡️ BREAKEVEN ACIONADO: Stop Loss movido para a entrada ({preco_entrada}).")
+                                        await broadcast_to_frontend({
+                                            "id": str(datetime.now().timestamp()),
+                                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                            "type": "trade",
+                                            "message": f"[{ativo}] 🛡️ BREAKEVEN ACIONADO: Stop Loss movido para o preço de entrada ({preco_entrada}). Risco zero."
+                                        })
+                                    else:
+                                        print(f"⚠️ Falha ao mover para Breakeven: {result.comment}")
+                        except Exception as e:
+                            print(f"Erro ao aplicar Breakeven: {e}")
+                            
+                elif decisao == 'HOLD' and posicao_aberta:
+                    print(f"[{ativo}] ⏳ HOLD: IA decidiu manter a posição atual aberta. Lucro atual: {posicao_aberta['profit']}")
 
                 # Broadcast para painel
                 log_msg = f"Relevância: {nova_relevancia}★ | Ativo: {ativo} | Decisão: {decisao}\nMotivo: {motivo}\nLatência: {tempo_ia:.2f}s"
