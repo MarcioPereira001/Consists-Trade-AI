@@ -209,8 +209,14 @@ class MT5Service:
             print("tipo_ordem deve ser 'BUY' ou 'SELL'")
             return None
 
-        # REQUISIÇÃO ROBUSTA (CORRIGIDA A SINTAXE)
-        type_filling_val = mt5.ORDER_FILLING_RETURN if "11" in ativo or symbol_info.exchange else mt5.ORDER_FILLING_FOK
+        # TYPE FILLING DINÂMICO
+        filling_mode = symbol_info.filling_mode
+        if filling_mode & mt5.SYMBOL_FILLING_RETURN:
+            type_filling_val = mt5.ORDER_FILLING_RETURN
+        elif filling_mode & mt5.SYMBOL_FILLING_FOK:
+            type_filling_val = mt5.ORDER_FILLING_FOK
+        else:
+            type_filling_val = mt5.ORDER_FILLING_IOC
         
         # --- SLIPPAGE DINÂMICO (DEVIATION) ---
         # B3 (WIN/WDO) exige margens diferentes de Forex para evitar rejeição em volatilidade
@@ -286,6 +292,54 @@ class MT5Service:
             return False
             
         return True
+
+    def obter_posicao_aberta(self, ativo: str):
+        """
+        Retorna um dicionário com os dados da posição aberta para o ativo.
+        """
+        if not self.connected:
+            return None
+            
+        posicoes = mt5.positions_get(symbol=ativo)
+        if posicoes is None or len(posicoes) == 0:
+            return None
+            
+        pos = posicoes[0]
+        return {
+            "ticket": pos.ticket,
+            "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
+            "price_open": pos.price_open,
+            "sl_atual": pos.sl,
+            "tp_atual": pos.tp,
+            "profit": pos.profit
+        }
+
+    def mover_stop_breakeven(self, ativo: str):
+        """
+        Move o Stop Loss para o preço de entrada (Zero a Zero).
+        """
+        posicao = self.obter_posicao_aberta(ativo)
+        if not posicao:
+            return False
+            
+        preco_entrada = posicao["price_open"]
+        sl_atual = posicao["sl_atual"]
+        
+        if abs(sl_atual - preco_entrada) > 0.00001:
+            request = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "symbol": ativo,
+                "sl": preco_entrada,
+                "tp": posicao["tp_atual"],
+                "position": posicao["ticket"]
+            }
+            result = mt5.order_send(request)
+            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                print(f"⚠️ Falha ao mover para Breakeven: {mt5.last_error()}")
+                return False
+            print(f"🛡️ BREAKEVEN ACIONADO: Stop Loss movido para a entrada ({preco_entrada}).")
+            return True
+        return False
 
     def obter_resultado_diario(self):
         """

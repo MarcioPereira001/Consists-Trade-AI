@@ -391,19 +391,18 @@ class AITrader:
          * LTB (Linha de Tendência de Baixa): Linha teto dos candles de topos cada vez mais baixos/altos (sempre na tendência atual), ela forma entre a última Resistência após romper, e a última resistência atual.
          * Conceito de LTA + LTB: Quando o mercado está perdendo a força entre tendência ou lateralização, usa-se as 2 linhas para identificar onde o mercado vai se romper LTA ou LTB.
 
-        --- 🚨 A LEI DO PULLBACK E O PERIGO DA REVERSÃO 🚨 ---
-        REGRA DE OURO: Você é ESTRITAMENTE PROIBIDO de emitir ORDEM DE "BUY" ou "SELL" no topo/fundo de um rompimento esticado e arme gatilho pegando o último S/R do micro movimento (sempre a favor da tendência macro).
-        OBJETIVO: MAIOR MARGEM, MAIS ASSERTIVIDADE E TIMING CERTO!
-        O SEU PROTOCOLO É O SEGUINTE:
-        1. ANALISE MAIS E ENTRE MENOS: Busque entrar nas operações de maiores probabilidades, NÃO DEDUZA, espere "WAIT" até ter CERTEZA.
-        2. ALINHAMENTO MACRO: Opere a favor da tendência (rompimento da Máx/Mín do dia). Identificou o rompimento? Emita "WAIT_TO_BUY" ou "WAIT_TO_SELL" e não faça nada.
-        3. ESPERE O PULLBACK: Aguarde o preço voltar para testar a linha rompida ou as médias móveis (Amarela/Azul).
-        4. O USO DA ARMADILHA (ORDEM PROGRAMADA): Quando o preço estiver se aproximando da zona de reteste (S/R), você DEVE usar o campo "ordem_programada" para armar a sua entrada (BUY/SELL) no preço exato do Suporte/Resistência. O robô executará automaticamente se houver rejeição (pavio) na zona.
-        5. ⚠️ ALERTA DE REVERSÃO (O FALSO PULLBACK): Analise o contexto! Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu. Nesse caso, mantenha a armadilha em "NONE" e a decisão em "WAIT".
-        6. EXECUÇÃO A MERCADO (SNIPER): Só emita "BUY" ou "SELL" direto se o preço JÁ ESTIVER na zona de Suporte/Resistência e JÁ TIVER DEIXADO um padrão claro de rejeição (pavio, doji, martelo) a seu favor.
-        7. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro. Exemplo: O mercado vinha caindo (LH/LL), mas agora rompeu o último topo menor (LH) E formou um fundo maior (HL). Só a partir daí você pode armar compras.
-        8. USAR LTA + LTB QUANDO MERCADO ESTIVER MUITO DÚVIDOSO SEM FORÇA PARA VOLTAR A OPERAR, AGUARDE APÓS CONFIRMAÇÃO CONCRETA, ENQUANTO NÃO ROMPER MANTENHA "WAIT".
-        9. TRAILLING STOP ÁGIL: Perceba as mudanças que pode dar loss e coloque o gain para 0 a 0 para se voltar o movimento dá tempo de reverter a perda, "decisao": "HOLD" (manter trade) ou "BREAKEVEN" (colocar no 0 a 0).
+        --- 🚨 A LEI DO TIMING E O PULLBACK OBRIGATÓRIO 🚨 ---
+        REGRA DE OURO: É TOTALMENTE PROIBIDO ENTRAR NO ROMPIMENTO. O rompimento é apenas um aviso, NÃO É O GATILHO DE ENTRADA.
+        Imponha este protocolo de 4 passos:
+        1. Confirmação 1 (Macro): A tendência principal vista no M5 (1 hora) deve apoiar a direção.
+        2. Confirmação 2 e 3 (Rompimento e Volume): Houve um rompimento de estrutura com volume alto? O rompimento é APENAS um aviso. Emita "WAIT".
+        3. O PULLBACK OBRIGATÓRIO: O robô DEVE ESPERAR o preço recuar e tocar no Suporte/Resistência recém rompido (ou na LTA/LTB).
+        4. Gatilho de Entrada (A Fraqueza): A ordem (BUY/SELL) só pode ser disparada quando o preço bater nesse nível de Pullback E o candle demonstrar fraqueza/rejeição (pavio contra o pullback, ex: doji, martelo), indicando que a tendência das confirmações vai ser retomada. Pegue todo o movimento a favor sem entrar no topo/fundo esticado!
+        
+        Outras Regras de Proteção:
+        5. ⚠️ ALERTA DE REVERSÃO: Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu.
+        6. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro.
+        7. TRAILLING STOP ÁGIL: Perceba as mudanças que podem dar loss e coloque o gain para 0 a 0 para se voltar o movimento dá tempo de reverter a perda, usando "decisao": "HOLD" ou "BREAKEVEN".
 
         --- ⚖️ MODO SCALPER (LATERALIZAÇÃO) ⚖️ ---
         Se a estrutura do mercado for "LATERALIZAÇÃO (Consolidação)":
