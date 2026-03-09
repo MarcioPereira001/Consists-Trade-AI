@@ -153,7 +153,10 @@ class AITrader:
         df_closed = df.iloc[:-1].tail(num_candles)
         linhas = []
         for _, row in df_closed.iterrows():
-            tempo = row['time'].strftime('%H:%M') if isinstance(row['time'], pd.Timestamp) else pd.to_datetime(row['time'], unit='s').strftime('%H:%M')
+            if isinstance(row['time'], (int, float, np.integer, np.floating)):
+                tempo = pd.to_datetime(row['time'], unit='s').strftime('%H:%M')
+            else:
+                tempo = pd.to_datetime(row['time']).strftime('%H:%M')
             o, h, l, c = row['open'], row['high'], row['low'], row['close']
             pavio_sup = h - max(o, c)
             pavio_inf = min(o, c) - l
@@ -191,7 +194,10 @@ class AITrader:
                 
                 if is_topo:
                     t = times[i]
-                    t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
+                    if isinstance(t, (int, float, np.integer, np.floating)):
+                        t_str = pd.to_datetime(t, unit='s').strftime('%H:%M')
+                    else:
+                        t_str = pd.to_datetime(t).strftime('%H:%M')
                     topos.append(f"{highs[i]:.5f} ({t_str})")
                 
                 # Verifica se é o menor valor na janela local (Fundo)
@@ -203,7 +209,10 @@ class AITrader:
                         
                 if is_fundo:
                     t = times[i]
-                    t_str = t.strftime('%H:%M') if isinstance(t, pd.Timestamp) else pd.to_datetime(t, unit='s').strftime('%H:%M')
+                    if isinstance(t, (int, float, np.integer, np.floating)):
+                        t_str = pd.to_datetime(t, unit='s').strftime('%H:%M')
+                    else:
+                        t_str = pd.to_datetime(t).strftime('%H:%M')
                     fundos.append(f"{lows[i]:.5f} ({t_str})")
         except Exception as e:
             print(f"Aviso: Erro ao calcular pivôs: {e}")
@@ -269,8 +278,21 @@ class AITrader:
             fechamento_ontem = dados_ontem.get('fechamento_ontem')
             
             # Tenta pegar a data do último candle para saber qual é o "hoje" do gráfico
-            data_atual_grafico = df_m1['time'].iloc[-1].date()
-            df_hoje = df_m1[df_m1['time'].dt.date == data_atual_grafico]
+            ultimo_tempo = df_m1['time'].iloc[-1]
+            if isinstance(ultimo_tempo, (int, float, np.integer, np.floating)):
+                data_atual_grafico = pd.to_datetime(ultimo_tempo, unit='s').date()
+            else:
+                data_atual_grafico = pd.to_datetime(ultimo_tempo).date()
+            
+            # Garante que a coluna time seja datetime para a comparação
+            if not pd.api.types.is_datetime64_any_dtype(df_m1['time']):
+                if pd.api.types.is_numeric_dtype(df_m1['time']):
+                    df_m1_temp_time = pd.to_datetime(df_m1['time'], unit='s')
+                else:
+                    df_m1_temp_time = pd.to_datetime(df_m1['time'])
+                df_hoje = df_m1[df_m1_temp_time.dt.date == data_atual_grafico]
+            else:
+                df_hoje = df_m1[df_m1['time'].dt.date == data_atual_grafico]
             
             if not df_hoje.empty:
                 abertura_hoje = df_hoje['open'].iloc[0]
@@ -283,8 +305,19 @@ class AITrader:
                     else:
                         gap_info = f"Sem Gap relevante ({gap_pct:.2f}%)."
                 
-                tempo_primeiro_candle = df_hoje['time'].iloc[0]
-                tempo_ultimo_candle = df_m1['time'].iloc[-1]
+                t1 = df_hoje['time'].iloc[0]
+                t2 = df_m1['time'].iloc[-1]
+                
+                if isinstance(t1, (int, float, np.integer, np.floating)):
+                    tempo_primeiro_candle = pd.to_datetime(t1, unit='s')
+                else:
+                    tempo_primeiro_candle = pd.to_datetime(t1)
+                    
+                if isinstance(t2, (int, float, np.integer, np.floating)):
+                    tempo_ultimo_candle = pd.to_datetime(t2, unit='s')
+                else:
+                    tempo_ultimo_candle = pd.to_datetime(t2)
+                    
                 minutos_desde_abertura = (tempo_ultimo_candle - tempo_primeiro_candle).total_seconds() / 60
                 
                 if minutos_desde_abertura <= 60:

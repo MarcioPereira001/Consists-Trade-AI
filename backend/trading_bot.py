@@ -22,11 +22,19 @@ def capturar_dados_triplos(symbol):
     rates_m5 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 60) # Aumentado para 60 para a IA ter o histórico correto na foto
     rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 15)
 
+    def process_df(rates):
+        if rates is None:
+            return None
+        df = pd.DataFrame(rates)
+        if 'time' in df.columns:
+            df['time'] = pd.to_datetime(df['time'], unit='s')
+        return df
+
     return {
-        "m1": pd.DataFrame(rates_m1) if rates_m1 is not None else None,
-        "m2": pd.DataFrame(rates_m2) if rates_m2 is not None else None,
-        "m5": pd.DataFrame(rates_m5) if rates_m5 is not None else None,
-        "m15": pd.DataFrame(rates_m15) if rates_m15 is not None else None
+        "m1": process_df(rates_m1),
+        "m2": process_df(rates_m2),
+        "m5": process_df(rates_m5),
+        "m15": process_df(rates_m15)
     }
 
 # Inicialização do Supabase
@@ -182,7 +190,7 @@ async def trading_loop():
                 preco_abertura_anterior = float(df_micro.iloc[-2]['open']) # Abertura da última vela (Para saber a cor)
                 preco_maxima_anterior = float(df_micro.iloc[-2]['high'])
                 preco_minima_anterior = float(df_micro.iloc[-2]['low'])
-                timestamp_atual = int(df_micro.iloc[-1]['time'].timestamp() if hasattr(df_micro.iloc[-1]['time'], 'timestamp') else df_micro.iloc[-1]['time'])
+                timestamp_atual = int(df_micro.iloc[-1]['time'].timestamp() if hasattr(df_micro.iloc[-1]['time'], 'timestamp') else pd.to_datetime(df_micro.iloc[-1]['time']).timestamp())
                 
                 atr_atual = df_micro['atr_14'].iloc[-1] if 'atr_14' in df_micro.columns else 0
 
@@ -544,7 +552,7 @@ async def atualizar_grafico_full():
                 candles_list = []
                 for _, row in df_micro.iterrows():
                     candles_list.append({
-                        "time": int(row['time'].timestamp()),
+                        "time": int(row['time'].timestamp() if hasattr(row['time'], 'timestamp') else pd.to_datetime(row['time']).timestamp()),
                         "open": float(row['open']), "high": float(row['high']),
                         "low": float(row['low']), "close": float(row['close'])
                     })

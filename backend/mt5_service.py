@@ -109,7 +109,8 @@ class MT5Service:
             
             # Formata a data para a biblioteca de desenho entender
             if 'time' in df_plot.columns:
-                df_plot['time'] = pd.to_datetime(df_plot['time'], unit='s')
+                if not pd.api.types.is_datetime64_any_dtype(df_plot['time']):
+                    df_plot['time'] = pd.to_datetime(df_plot['time'], unit='s')
                 df_plot.set_index('time', inplace=True)
                 
             # Renomeia as colunas para o padrão exigido
