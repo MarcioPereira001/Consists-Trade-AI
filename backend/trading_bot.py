@@ -101,7 +101,8 @@ async def trading_loop():
 
     cached_configs = None
     last_config_time = 0
-    ultimo_minuto_ia = -1 # Controle do ciclo de 60s
+    ultimo_ts_ia = 0 # Controle do ciclo da IA (em segundos)
+    contador_ciclo_posicionado = 0 # Para alternar texto/imagem a cada 2.5 min
 
     while True:
         try:
@@ -289,78 +290,83 @@ async def trading_loop():
                 posicao_aberta = None
                 if ambiente != 'REPLAY HISTÓRICO' and mt5_service.tem_posicao_aberta(ativo):
                     posicao_aberta = mt5_service.obter_posicao_aberta(ativo)
+                    
+                    if posicao_aberta:
+                        sl = posicao_aberta.get("sl_atual", 0)
+                        price_open = posicao_aberta.get("price_open", 0)
+                        pos_type = posicao_aberta.get("type", "")
+                        
+                        is_protected = False
+                        if sl > 0:
+                            if pos_type == "BUY" and sl >= price_open - 0.00001:
+                                is_protected = True
+                            elif pos_type == "SELL" and sl <= price_open + 0.00001:
+                                is_protected = True
+                                
+                        if is_protected:
+                            agora_ts_loop = time_lib.time()
+                            if (agora_ts_loop - ultimo_ts_ia) > 60:
+                                ultimo_ts_ia = agora_ts_loop
+                                print(f"[{ativo}] 💤 Operação protegida no 0 a 0 (Breakeven). IA dormindo para economizar tokens.")
+                                await broadcast_to_frontend({
+                                    "id": str(datetime.now().timestamp()),
+                                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                    "type": "info",
+                                    "message": f"[{ativo}] 💤 Operação protegida no 0 a 0. IA em modo de economia de tokens."
+                                })
+                            await asyncio.sleep(15)
+                            continue
+                            
                     print(f"[{ativo}] Posicionado. IA assumindo gestão da operação...")
 
                 # ======================================================================
-                # MÓDULO ANALISTA (IA): LEITURA DE FOTOS A CADA 5 MINUTOS E TEXTO A CADA 1 MINUTO
+                # MÓDULO ANALISTA (IA): CONTROLE DE CICLO DINÂMICO (1min vs 2.5min)
                 # ======================================================================
-                minuto_atual = datetime.now().minute
+                agora_ts_loop = time_lib.time()
+                esta_posicionado = (ambiente != 'REPLAY HISTÓRICO' and mt5_service.tem_posicao_aberta(ativo))
                 
-                # CICLO DE 15 SEGUNDOS: Monitora Armadilhas e Fast-Exit (Scalper)
-                if minuto_atual == ultimo_minuto_ia:
-                    # --- LÓGICA DE FAST-EXIT (MODO SCALPER) ---
-                    # Se estamos posicionados e a IA ativou o modo Scalper, monitoramos a exaustão
-                    if ambiente != 'REPLAY HISTÓRICO' and mt5_service.tem_posicao_aberta(ativo):
-                        estado_ia = memoria_estado_ia.get(profile_id, "")
-                        if "SCALPER_MODE" in estado_ia:
-                            # Pega o último RSI/Stoch do M1
-                            rsi_atual = pacote_dados["m1"]['rsi_14'].iloc[-1]
-                            stoch_k = pacote_dados["m1"]['stoch_k'].iloc[-1]
-                            
-                            # Verifica o tipo de posição aberta
-                            posicoes = mt5.positions_get(symbol=ativo)
-                            if posicoes:
-                                pos = posicoes[0]
-                                tipo_pos = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
-                                
-                                # Regra de Saída Rápida: Reversão do Indicador
-                                # Se comprou na sobrevenda (<30) e o RSI cruzou pra cima de 50 (ou Stoch > 80)
-                                if tipo_pos == "BUY" and (rsi_atual > 60 or stoch_k > 80):
-                                    print(f"⚡ FAST-EXIT SCALPER: Fechando COMPRA. RSI: {rsi_atual:.1f} | Stoch: {stoch_k:.1f}")
-                                    # Envia ordem contrária para fechar
-                                    mt5_service.enviar_ordem(ativo, "SELL", pos.volume, 0, 0)
-                                    await broadcast_to_frontend({
-                                        "id": str(datetime.now().timestamp()),
-                                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                                        "type": "trade",
-                                        "message": f"[{ativo}] ⚡ FAST-EXIT (Scalper): Posição de COMPRA encerrada por reversão de indicador (RSI: {rsi_atual:.1f})."
-                                    })
-                                
-                                # Se vendeu na sobrecompra (>70) e o RSI cruzou pra baixo de 50 (ou Stoch < 20)
-                                elif tipo_pos == "SELL" and (rsi_atual < 40 or stoch_k < 20):
-                                    print(f"⚡ FAST-EXIT SCALPER: Fechando VENDA. RSI: {rsi_atual:.1f} | Stoch: {stoch_k:.1f}")
-                                    # Envia ordem contrária para fechar
-                                    mt5_service.enviar_ordem(ativo, "BUY", pos.volume, 0, 0)
-                                    await broadcast_to_frontend({
-                                        "id": str(datetime.now().timestamp()),
-                                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                                        "type": "trade",
-                                        "message": f"[{ativo}] ⚡ FAST-EXIT (Scalper): Posição de VENDA encerrada por reversão de indicador (RSI: {rsi_atual:.1f})."
-                                    })
-
+                # Define o intervalo do ciclo da IA
+                if esta_posicionado:
+                    intervalo_ia = 150  # 2.5 minutos (150 segundos)
+                else:
+                    intervalo_ia = 60   # 1 minuto (60 segundos)
+                
+                # CICLO DE ESPERA: Monitora Armadilhas
+                if (agora_ts_loop - ultimo_ts_ia) < intervalo_ia:
                     # Apenas avisa o frontend que está vivo e monitorando
+                    tempo_restante = int(intervalo_ia - (agora_ts_loop - ultimo_ts_ia))
                     await broadcast_to_frontend({
                         "id": str(datetime.now().timestamp()),
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
                         "type": "info",
-                        "message": f"[{ativo}] Monitorando armadilhas e trailing stops... (Aguardando fechamento do candle M1)"
+                        "message": f"[{ativo}] Monitorando armadilhas e trailing stops... (Próxima IA em ~{tempo_restante}s)"
                     })
                     await asyncio.sleep(15)
                     continue
                 
-                # CICLO DE 60 SEGUNDOS: Chama a IA
-                ultimo_minuto_ia = minuto_atual
+                # CICLO DA IA ATINGIDO
+                ultimo_ts_ia = agora_ts_loop
+                minuto_atual = datetime.now().minute
                 
                 dados_ontem = mt5_service.obter_ohlc_ontem(ativo) or {}
                 relevancia_anterior = memoria_relevancia.get(profile_id, 1)
                 estado_anterior_ia = memoria_estado_ia.get(profile_id, "Iniciando...")
                 
-                # Controle Inteligente de Visão Computacional (Economiza Latência)
-                enviar_fotos = (minuto_atual % 5 == 0) # Gera foto nos minutos: 0, 5, 10, 15, 20...
+                # Controle Inteligente de Visão Computacional (Economiza Latência e Tokens)
+                enviar_fotos = False
+                if esta_posicionado:
+                    # A cada 2.5 min, alterna: 1=Texto, 2=Imagem
+                    contador_ciclo_posicionado += 1
+                    if contador_ciclo_posicionado % 2 == 0:
+                        enviar_fotos = True # No ciclo par (5 min), envia foto
+                else:
+                    # Quando não posicionado, mantém a regra original (a cada 5 minutos do relógio)
+                    enviar_fotos = (minuto_atual % 5 == 0)
+                    contador_ciclo_posicionado = 0 # Reseta o contador
                 
                 caminho_foto_m5, caminho_foto_m1 = None, None
                 if enviar_fotos:
-                    print(f"📸 Ciclo de 5 Minutos. Gerando imagens visuais para a IA...")
+                    print(f"📸 Ciclo com Imagens. Gerando imagens visuais para a IA...")
                     # Correção: Passando os argumentos posicionais corretamente
                     caminho_foto_m5 = mt5_service.capturar_imagem_grafico(pacote_dados["m5"], ativo, "chart_m5.png", "M5")
                     caminho_foto_m1 = mt5_service.capturar_imagem_grafico(pacote_dados["m1"], ativo, "chart_m1.png", "M1")
@@ -413,9 +419,18 @@ async def trading_loop():
                         nova_armadilha["timestamp"] = time_lib.time()
                         nova_armadilha["preco_gatilho"] = gatilho_ia # Garante que é float
                     
-                memoria_ordem_programada[profile_id] = nova_armadilha
-
                 decisao = analise.get('decisao', 'WAIT')
+
+                # --- BLINDAGEM QUANT: IA NÃO PODE ABRIR NOVA ORDEM SE JÁ ESTIVER POSICIONADA ---
+                if esta_posicionado:
+                    if nova_armadilha.get("acao") != "NONE":
+                        print(f"⚠️ [BLINDAGEM] Armadilha ignorada. IA já está posicionada e deve focar apenas na gestão.")
+                        nova_armadilha = {"acao": "NONE"}
+                    if decisao not in ['HOLD', 'BREAKEVEN']:
+                        print(f"⚠️ [BLINDAGEM] Decisão '{decisao}' inválida para gestão. Convertida para 'HOLD'. IA já está posicionada.")
+                        decisao = 'HOLD'
+
+                memoria_ordem_programada[profile_id] = nova_armadilha
                 motivo = analise.get('motivo', 'Sem motivo')
                 estrategia_escolhida = analise.get('estrategia_escolhida', estrategia)
 

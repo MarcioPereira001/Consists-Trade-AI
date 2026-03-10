@@ -24,13 +24,14 @@ class MT5Service:
                 print(f"Falha ao conectar na conta MT5: {mt5.last_error()}")
                 return False
                 
-        print("Conectado ao MetaTrader 5 com sucesso.")
+        print("Conectado ao MetaTrader 5 com sucesso. (Modo Micro-Scalping)")
         self.connected = True
         return True
 
-    def obter_dados_mercado(self, ativo: str, timeframe: int = mt5.TIMEFRAME_M5, qtd_candles: int = 100):
+    def obter_dados_mercado(self, ativo: str, timeframe: int = mt5.TIMEFRAME_M1, qtd_candles: int = 100):
         """
-        Obtém os dados históricos (OHLCV) do ativo especificado e adiciona indicadores de momento (RSI, Estocástico).
+        Obtém os dados históricos (OHLCV) do ativo especificado.
+        Focado em M1 para Micro-Scalping. Adiciona RSI e VWAP.
         """
         if not self.connected:
             print("MT5 não está conectado. Tentando reconectar...")
@@ -46,28 +47,14 @@ class MT5Service:
         df['time'] = pd.to_datetime(df['time'], unit='s')
         
         # --- CÁLCULO DE INDICADORES NATIVOS (PANDAS) ---
-        # 1. RSI (Relative Strength Index) - Período 14
+        # 1. RSI (Relative Strength Index) - Período 14 (Reversão)
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['rsi_14'] = 100 - (100 / (1 + rs))
         
-        # 2. Estocástico (Stochastic Oscillator) - %K(14), %D(3)
-        low_14 = df['low'].rolling(window=14).min()
-        high_14 = df['high'].rolling(window=14).max()
-        df['stoch_k'] = 100 * ((df['close'] - low_14) / (high_14 - low_14))
-        df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
-        
-        # 3. ATR (Average True Range) - Período 14
-        df['prev_close'] = df['close'].shift(1)
-        df['tr1'] = df['high'] - df['low']
-        df['tr2'] = abs(df['high'] - df['prev_close'])
-        df['tr3'] = abs(df['low'] - df['prev_close'])
-        df['tr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
-        df['atr_14'] = df['tr'].rolling(window=14).mean()
-
-        # 4. VWAP (Volume Weighted Average Price) Diária
+        # 2. VWAP (Volume Weighted Average Price) Diária
         df['date'] = df['time'].dt.date
         df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
         df['tp_vol'] = df['typical_price'] * df['tick_volume']
@@ -76,50 +63,31 @@ class MT5Service:
         df['vwap'] = df['cum_tp_vol'] / df['cum_vol']
         
         # Preenche NaNs iniciais com 50 (neutro) para evitar quebra na IA
-        df.fillna({'rsi_14': 50, 'stoch_k': 50, 'stoch_d': 50, 'atr_14': 0, 'vwap': df['close']}, inplace=True)
+        df.fillna({'rsi_14': 50, 'vwap': df['close']}, inplace=True)
         
-        return df[['time', 'open', 'high', 'low', 'close', 'tick_volume', 'rsi_14', 'stoch_k', 'stoch_d', 'atr_14', 'vwap']]
+        return df[['time', 'open', 'high', 'low', 'close', 'tick_volume', 'rsi_14', 'vwap']]
 
-    def obter_ohlc_ontem(self, ativo: str):
-        """
-        Busca especificamente a Máxima, Mínima e Fechamento do dia anterior.
-        """
-        if not self.connected: return None
-        
-        # Puxa o candle diário (D1). O índice 1 é o dia de ontem terminado.
-        rates = mt5.copy_rates_from_pos(ativo, mt5.TIMEFRAME_D1, 1, 1)
-        if rates is not None and len(rates) > 0:
-            return {
-                "maxima_ontem": float(rates[0]['high']),
-                "minima_ontem": float(rates[0]['low']),
-                "fechamento_ontem": float(rates[0]['close'])
-            }
-        return None
-
-    def capturar_imagem_grafico(self, df_dados, symbol, filename="chart.png", titulo_grafico="M5"):
-        """Gera uma foto (plot) do gráfico para a IA 'enxergar'."""
+    def capturar_imagem_grafico(self, df_dados, symbol, filename="chart_m1.png", titulo_grafico="M1 - Micro Scalping"):
+        """Gera uma foto (plot) do gráfico M1 para a IA 'enxergar' o volume e RSI."""
         if df_dados is None or df_dados.empty: 
             return None
         
         try:
             import mplfinance as mpf
-            import pandas as pd # Garantindo que o pandas está disponível para converter a data
+            import pandas as pd
             
             df_plot = df_dados.copy()
             
-            # Formata a data para a biblioteca de desenho entender
             if 'time' in df_plot.columns:
                 if not pd.api.types.is_datetime64_any_dtype(df_plot['time']):
                     df_plot['time'] = pd.to_datetime(df_plot['time'], unit='s')
                 df_plot.set_index('time', inplace=True)
                 
-            # Renomeia as colunas para o padrão exigido
             df_plot.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'tick_volume': 'Volume'}, inplace=True)
             
-            # Pega os últimos 60 candles (A "foto" ideal panorâmica para a IA)
-            df_plot = df_plot.tail(60) 
+            # Pega os últimos 30 candles (Foco no curtíssimo prazo)
+            df_plot = df_plot.tail(30) 
             
-            # --- ESTILO DARK MODE ---
             mc = mpf.make_marketcolors(up='#10b981', down='#ef4444', edge='inherit', wick='inherit', volume='in', ohlc='i')
             
             estilo_rc = {
@@ -139,14 +107,13 @@ class MT5Service:
                 rc=estilo_rc
             )
             
-            # --- GERAÇÃO DA IMAGEM COM MÉDIAS MÓVEIS DE ALTO CONTRASTE ---
             mpf.plot(
                 df_plot, 
                 type='candle', 
                 style=s, 
                 volume=True,
-                mav=(9, 21),                       # Adiciona Média Móvel Rápida (9) e Lenta (21)
-                mavcolors=('#FFFF00', '#00BFFF'),  # Amarelo (#FFFF00) e Azul Claro (#00BFFF)
+                mav=(9, 21),
+                mavcolors=('#FFFF00', '#00BFFF'),
                 title=f"VISÃO IA - {symbol} {titulo_grafico}", 
                 savefig=filename, 
                 figsize=(10, 6)
@@ -163,8 +130,7 @@ class MT5Service:
 
     def enviar_ordem(self, ativo: str, tipo_ordem: str, lote: float, sl_pts: int, tp_pts: int):
         """
-        Envia uma ordem a mercado (BUY ou SELL) com precisão fractal e normalização de volume.
-        Suporta ativos B3 (BITH11, WIN, WDO) e Forex.
+        Envia uma ordem a mercado (BUY ou SELL) com SL e TP iniciais curtos.
         """
         if not self.connected:
             print("MT5 não está conectado.")
@@ -180,15 +146,12 @@ class MT5Service:
                 print(f"Falha ao selecionar ativo {ativo}.")
                 return None
 
-        # --- FUNDAMENTOS DO ATIVO ---
         point = symbol_info.point
-        digits = symbol_info.digits  # BITH11=2, WIN=0, EURUSD=5
+        digits = symbol_info.digits
         volume_step = symbol_info.volume_step
         
-        # NORMALIZAÇÃO DO LOTE (Preservando sua lógica robusta)
         lote_normalizado = round(float(lote) / volume_step) * volume_step
         
-        # Obtém o preço atual (Ask para Compra, Bid para Venda)
         tick = mt5.symbol_info_tick(ativo)
         if tick is None:
             print(f"Falha ao obter tick para {ativo}.")
@@ -196,7 +159,6 @@ class MT5Service:
             
         price = tick.ask if tipo_ordem == 'BUY' else tick.bid
         
-        # --- CÁLCULO DE SL E TP COM ARREDONDAMENTO PRECISO ---
         if tipo_ordem == 'BUY':
             order_type = mt5.ORDER_TYPE_BUY
             sl = price - (sl_pts * point)
@@ -209,10 +171,7 @@ class MT5Service:
             print("tipo_ordem deve ser 'BUY' ou 'SELL'")
             return None
 
-        # TYPE FILLING DINÂMICO
         filling_mode = symbol_info.filling_mode
-        # O MetaTrader5 em Python não possui a flag SYMBOL_FILLING_RETURN.
-        # filling_mode = 1 (FOK), 2 (IOC), 3 (FOK e IOC), 0 (RETURN - comum na B3).
         if filling_mode == 1 or filling_mode == 3:
             type_filling_val = mt5.ORDER_FILLING_FOK
         elif filling_mode == 2:
@@ -220,16 +179,15 @@ class MT5Service:
         else:
             type_filling_val = mt5.ORDER_FILLING_RETURN
         
-        # --- SLIPPAGE DINÂMICO (DEVIATION) ---
-        # B3 (WIN/WDO) exige margens diferentes de Forex para evitar rejeição em volatilidade
+        # Slippage ajustado para scalping (mais apertado)
         if "WIN" in ativo.upper():
-            deviation_pts = 150  # 30 ticks (150 pontos) no índice
+            deviation_pts = 50
         elif "WDO" in ativo.upper():
-            deviation_pts = 10   # 20 ticks (10 pontos) no dólar
+            deviation_pts = 5
         elif "BIT" in ativo.upper():
-            deviation_pts = 500  # Volatilidade cripto B3
+            deviation_pts = 200
         else:
-            deviation_pts = 20   # Padrão Forex/Outros
+            deviation_pts = 10
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -237,16 +195,15 @@ class MT5Service:
             "volume": float(lote_normalizado),
             "type": order_type,
             "price": round(price, digits),
-            "sl": round(sl, digits),    # Arredondamento dinâmico para evitar rejeição
-            "tp": round(tp, digits),    # Essencial para ETFs como BITH11
+            "sl": round(sl, digits),
+            "tp": round(tp, digits),
             "deviation": deviation_pts,
             "magic": 123456,
-            "comment": "Consists Trade AI - Sniper V4",
+            "comment": "Consists Trade AI - Micro Scalper",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": type_filling_val # Passado corretamente aqui
+            "type_filling": type_filling_val
         }
 
-        # ENVIO E VALIDAÇÃO
         result = mt5.order_send(request)
         
         if result is None:
@@ -255,53 +212,20 @@ class MT5Service:
             
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             print(f"ERRO DE EXECUÇÃO: {result.retcode} - Comentário: {result.comment}")
-            # Log de depuração para entender rejeições de preço
-            print(f"DEBUG: Price: {round(price, digits)} | SL: {round(sl, digits)} | TP: {round(tp, digits)}")
             return None
             
         print(f"Ordem executada com sucesso! Ticket: {result.order} | Ativo: {ativo}")
         return result
-        
-    def simular_ordem_paper_trading(self, ativo: str, tipo_ordem: str, preco_simulado: float, motivo: str):
-        """
-        Simula a execução de uma ordem no banco de dados sem enviar para a corretora real.
-        Evita o Erro 10027 (Mercado Fechado / Algo Trading disabled).
-        """
-        import time
-        import random
-        
-        ticket_simulado = int(time.time()) + random.randint(100, 999)
-        print(f"[PAPER TRADING] Ordem {tipo_ordem} simulada com sucesso para {ativo} a R${preco_simulado:.2f}. Ticket: {ticket_simulado}")
-        
-        # Simula o retorno do MT5
-        class MockResult:
-            def __init__(self, order, price):
-                self.order = order
-                self.price = price
-                
-        return MockResult(order=ticket_simulado, price=preco_simulado)
 
     def tem_posicao_aberta(self, ativo: str):
-        """
-        Verifica diretamente no MetaTrader 5 se já existe uma operação rodando para este ativo.
-        """
         if not self.connected:
             return False
-            
         posicoes = mt5.positions_get(symbol=ativo)
-        
-        if posicoes is None or len(posicoes) == 0:
-            return False
-            
-        return True
+        return posicoes is not None and len(posicoes) > 0
 
     def obter_posicao_aberta(self, ativo: str):
-        """
-        Retorna um dicionário com os dados da posição aberta para o ativo.
-        """
         if not self.connected:
             return None
-            
         posicoes = mt5.positions_get(symbol=ativo)
         if posicoes is None or len(posicoes) == 0:
             return None
@@ -311,77 +235,109 @@ class MT5Service:
             "ticket": pos.ticket,
             "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
             "price_open": pos.price_open,
+            "price_current": pos.price_current,
             "sl_atual": pos.sl,
             "tp_atual": pos.tp,
-            "profit": pos.profit
+            "profit": pos.profit,
+            "volume": pos.volume
         }
 
-    def mover_stop_breakeven(self, ativo: str):
+    def gerenciar_trailing_stop_dinamico(self, ativo: str):
         """
-        Move o Stop Loss para o preço de entrada (Zero a Zero).
+        Lógica de Trailing Stop Móvel (Micro-Scalping) BLINDADA:
+        - Calcula o Spread e StopLevel da corretora para evitar Erro 10016.
+        - Breakeven Real: Cobre taxas e spread.
         """
         posicao = self.obter_posicao_aberta(ativo)
         if not posicao:
             return False
             
-        preco_entrada = posicao["price_open"]
-        sl_atual = posicao["sl_atual"]
+        symbol_info = mt5.symbol_info(ativo)
+        if not symbol_info:
+            return False
+            
+        point = symbol_info.point
+        digits = symbol_info.digits
         
-        if abs(sl_atual - preco_entrada) > 0.00001:
+        # --- BLINDAGEM DE INFRAESTRUTURA MT5 ---
+        stoplevel = symbol_info.trade_stops_level * point
+        spread = symbol_info.spread * point
+        custo_tick = spread + (1 * point) # Cobre o spread + 1 tick de lucro mínimo
+        
+        preco_entrada = posicao["price_open"]
+        preco_atual = posicao["price_current"]
+        sl_atual = posicao["sl_atual"]
+        tipo = posicao["type"]
+        
+        if tipo == "BUY":
+            pontos_ganhos = (preco_atual - preco_entrada) / point
+        else:
+            pontos_ganhos = (preco_entrada - preco_atual) / point
+            
+        novo_sl = sl_atual
+        
+        # Lógica de escadinha do Trailing Stop
+        if pontos_ganhos >= 50:
+            novo_sl = preco_entrada + (40 * point) if tipo == "BUY" else preco_entrada - (40 * point)
+        elif pontos_ganhos >= 20:
+            novo_sl = preco_entrada + (10 * point) if tipo == "BUY" else preco_entrada - (10 * point)
+        elif pontos_ganhos >= 10:
+            # BREAKEVEN REAL: Garante que sai com lucro mínimo para pagar a B3/Corretora
+            novo_sl = preco_entrada + custo_tick if tipo == "BUY" else preco_entrada - custo_tick
+            
+        novo_sl = round(novo_sl, digits)
+        
+        # --- VALIDAÇÃO DE SEGURANÇA (ANTI ERRO 10016) ---
+        modificar = False
+        if tipo == "BUY":
+            # Só sobe o stop se for maior que o atual E respeitar a distância mínima da corretora
+            if novo_sl > sl_atual and (preco_atual - novo_sl) >= stoplevel:
+                modificar = True
+        elif tipo == "SELL":
+            # Só desce o stop se for menor que o atual E respeitar a distância mínima da corretora
+            if (novo_sl < sl_atual or sl_atual == 0) and (novo_sl - preco_atual) >= stoplevel:
+                modificar = True
+                
+        if modificar:
             request = {
                 "action": mt5.TRADE_ACTION_SLTP,
                 "symbol": ativo,
-                "sl": preco_entrada,
+                "sl": novo_sl,
                 "tp": posicao["tp_atual"],
                 "position": posicao["ticket"]
             }
             result = mt5.order_send(request)
             if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-                print(f"⚠️ Falha ao mover para Breakeven: {mt5.last_error()}")
+                # Se der erro, printa o motivo exato para debug quantitativo
+                erro_msg = mt5.last_error()
+                print(f"⚠️ Falha ao mover Trailing Stop. RetCode: {result.retcode if result else 'None'} | Erro: {erro_msg}")
                 return False
-            print(f"🛡️ BREAKEVEN ACIONADO: Stop Loss movido para a entrada ({preco_entrada}).")
+                
+            print(f"🛡️ TRAILING STOP ACIONADO: Lucro atual {pontos_ganhos:.1f} pts. Stop movido para {novo_sl}.")
             return True
+            
         return False
 
     def obter_resultado_diario(self):
-        """
-        Calcula o lucro/perda total de todas as ordens fechadas hoje.
-        Essencial para a trava de meta e limite de perda.
-        """
         if not self.connected:
             return 0.0
-
-        # Define o início do dia de hoje (00:00:00)
         hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         timestamp_hoje = int(hoje.timestamp())
-
-        # Busca o histórico de ordens finalizadas
         historico = mt5.history_deals_get(timestamp_hoje, int(datetime.now().timestamp()))
-        
         if historico is None or len(historico) == 0:
             return 0.0
-
         df_historico = pd.DataFrame(list(historico), columns=historico[0]._asdict().keys())
-        
-        # Filtra apenas o que é lucro/prejuízo de trade (ignora depósitos/ajustes)
-        # Entry 1 é 'OUT' (fechamento de posição)
         lucro_total = df_historico[df_historico['entry'] == 1]['profit'].sum()
         comissao = df_historico['commission'].sum()
         swap = df_historico['swap'].sum()
-
         return float(lucro_total + comissao + swap)
 
     def obter_informacoes_conta(self):
-        """
-        Retorna dados financeiros da conta (Saldo, Patrimônio, Margem).
-        """
         if not self.connected:
             return None
-        
         conta = mt5.account_info()
         if conta is None:
             return None
-            
         return {
             "balance": conta.balance,
             "equity": conta.equity,

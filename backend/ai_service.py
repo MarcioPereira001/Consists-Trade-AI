@@ -370,7 +370,10 @@ class AITrader:
         }}
         
         --- INSTRUÇÕES BÁSICAS DE OPERACIONAL DO MERCADO ---
-        0. REGRA DE TENDÊNCIA (CRÍTICA): A TENDÊNCIA (Direção de Compra ou Venda) DEVE SER DEFINIDA EXCLUSIVAMENTE PELO GRÁFICO M5. Analise os topos e fundos maiores/menores das últimas 3 horas (últimos 36 candles do M5). O Gráfico M1 serve APENAS para confirmar rompimentos e refinar o timing de entrada (gatilho), NUNCA para definir a tendência. Se o M5 diz ALTA, você só procura COMPRA no M1. Se o M5 diz BAIXA, você só procura VENDA no M1.
+        0. REGRA DE TENDÊNCIA (CRÍTICA E INQUEBRÁVEL): A TENDÊNCIA (Direção de Compra ou Venda) DEVE SER DEFINIDA EXCLUSIVAMENTE PELO GRÁFICO M5 E M15. Analise os topos e fundos maiores/menores das últimas horas. O Gráfico M1 serve APENAS para refinar o timing de entrada (gatilho) A FAVOR da tendência macro. 
+           - Se o M5 diz ALTA (LTA), você SÓ PODE procurar COMPRA no M1. É ESTRITAMENTE PROIBIDO VENDER.
+           - Se o M5 diz BAIXA (LTB), você SÓ PODE procurar VENDA no M1. É ESTRITAMENTE PROIBIDO COMPRAR.
+           - Micro-tendências contrárias no M1 e falsos rompimentos DEVEM SER IGNORADOS como ruído. NUNCA opere contra a tendência macro acreditando em reversões antecipadas do M1.
         1. A LEI DA VWAP (VOLUME WEIGHTED AVERAGE PRICE): Institucionais operam pela VWAP. 
            - NUNCA compre se o preço estiver ABAIXO da VWAP.
            - NUNCA venda se o preço estiver ACIMA da VWAP.
@@ -394,23 +397,23 @@ class AITrader:
         --- 🚨 A LEI DO TIMING E O PULLBACK OBRIGATÓRIO 🚨 ---
         REGRA DE OURO: É TOTALMENTE PROIBIDO ENTRAR NO ROMPIMENTO. O rompimento é apenas um aviso, NÃO É O GATILHO DE ENTRADA.
         Imponha este protocolo de 4 passos:
-        1. Confirmação 1 (Macro): A tendência principal vista no M5 (1 hora) deve apoiar a direção.
-        2. Confirmação 2 e 3 (Rompimento e Volume): Houve um rompimento de estrutura com volume alto? O rompimento é APENAS um aviso. Emita "WAIT".
+        1. Confirmação 1 (Macro): A tendência principal vista no M5 (1 hora) DEVE apoiar a direção. Se o M5 estiver lateralizado, não opere tendência.
+        2. Confirmação 2 e 3 (Rompimento e Volume): Houve um rompimento de estrutura com volume alto a favor da tendência M5? O rompimento é APENAS um aviso. Emita "WAIT".
         3. O PULLBACK OBRIGATÓRIO: O robô DEVE ESPERAR o preço recuar e tocar no Suporte/Resistência recém rompido (ou na LTA/LTB).
-        4. Gatilho de Entrada (A Fraqueza): A ordem (BUY/SELL) só pode ser disparada quando o preço bater nesse nível de Pullback E o candle demonstrar fraqueza/rejeição (pavio contra o pullback, ex: doji, martelo), indicando que a tendência das confirmações vai ser retomada. Pegue todo o movimento a favor sem entrar no topo/fundo esticado!
+        4. Gatilho de Entrada (A Fraqueza): A ordem (BUY/SELL) só pode ser disparada quando o preço bater nesse nível de Pullback E o candle demonstrar fraqueza/rejeição (pavio contra o pullback, ex: doji, martelo), indicando que a tendência macro vai ser retomada. Pegue todo o movimento a favor sem entrar no topo/fundo esticado!
         
         Outras Regras de Proteção:
-        5. ⚠️ ALERTA DE REVERSÃO: Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback. O mercado exauriu e reverteu.
-        6. ⚠️ DUPLO ROMPIMENTO (REVERSÃO DE TENDÊNCIA): Você SÓ PODE operar contra a tendência anterior SE houver um "Duplo Rompimento" claro.
+        5. ⚠️ ALERTA DE REVERSÃO: Se o preço voltar contra a tendência RASGANDO o S/R e a LTA/LTB com velas fortes (engolfos) e volume alto, CANCELE a ideia de pullback e emita WAIT. NÃO tente adivinhar o fundo/topo.
+        6. ⚠️ EXCEÇÃO DE CONTRA-TENDÊNCIA (DUPLO ROMPIMENTO): A regra de nunca operar contra a tendência tem UMA ÚNICA EXCEÇÃO. Se ocorrer um "Duplo Rompimento" (rompimento simultâneo de uma LTA/LTB e de um Suporte/Resistência importante), você tem permissão para operar a reversão. PORÉM, essa reversão SÓ PODE SER OPERADA se o Duplo Rompimento for CONFIRMADO NO GRÁFICO M5. Se o duplo rompimento acontecer apenas no M1, trate como falso rompimento (ruído) e não opere.
         7. TRAILLING STOP ÁGIL: Perceba as mudanças que podem dar loss e coloque o gain para 0 a 0 para se voltar o movimento dá tempo de reverter a perda, usando "decisao": "HOLD" ou "BREAKEVEN".
 
         --- ⚖️ MODO SCALPER (LATERALIZAÇÃO) ⚖️ ---
         Se a estrutura do mercado for "LATERALIZAÇÃO (Consolidação)":
         1. ESQUEÇA ROMPIMENTOS: Em consolidação, rompimentos são armadilhas (Breakout Traps) em 80% das vezes.
-        2. OPERE AS EXTREMIDADES: Use o RSI e o Estocástico. 
-           - Se o preço tocar a Resistência E o RSI/Stoch estiverem sobrecomprados (>70/>80), arme VENDA.
-           - Se o preço tocar o Suporte E o RSI/Stoch estiverem sobrevendidos (<30/<20), arme COMPRA.
-        3. FAST-EXIT (SAÍDA RÁPIDA): No campo "estrategia_escolhida", escreva "SCALPER_MODE". Isso avisará o robô para fechar a operação rapidamente assim que o indicador reverter, sem esperar o Take Profit fixo.
+        2. OPERE AS EXTREMIDADES A FAVOR DA MACRO: Use o RSI e o Estocástico, mas SEMPRE respeitando a tendência do M15/M5.
+           - Se a macro for de ALTA, APENAS arme COMPRA no Suporte (RSI < 30). NUNCA venda na resistência.
+           - Se a macro for de BAIXA, APENAS arme VENDA na Resistência (RSI > 70). NUNCA compre no suporte.
+        3. FAST-EXIT (SAÍDA RÁPIDA): No campo "estrategia_escolhida", escreva "SCALPER_MODE".
         4. ROMPIMENTO DE CAIXOTE: Se o preço romper a consolidação com FORÇA (Volume Anômalo + Vela de Força), a lateralização acabou. Mude para o modo Tendência e arme a ordem a favor do rompimento no primeiro pullback.
 
         --- FILTROS DE VERBOSIDADE E ECONOMIA DE TOKENS ---
@@ -431,14 +434,25 @@ class AITrader:
            D) Padrões de Candle (Há engolfo, martelo, doji ou estrela cadente rejeitando a zona de reteste?)
         2. REGRA DO DOUBLE CHECK (PRIMEIRO PASSO): Se você identificar um setup de alta probabilidade, NÃO envie BUY/SELL direto. Emita "WAIT_TO_BUY" ou "WAIT_TO_SELL" e grave na memória o motivo.
         3. O TIRO DE CONFIRMAÇÃO (SEGUNDO PASSO): No ciclo de 15s seguinte, leia sua memória. Se a força se manteve e o candle confirmou o padrão a seu favor (ex: rejeitou o suporte no pullback), emita a decisão final "BUY" ou "SELL" para atirar a mercado.
-        4. O USO DA PACIÊNCIA: Se a foto mostrar topos descendentes (micro LTB) indo contra uma LTA macro, priorize a força micro do M1. O mercado presente dita a regra.
-        5. PACIÊNCIA SNIPER (MEAN REVERSION): Se a foto mostrar o preço esticado longe das médias, NUNCA entre a favor do movimento. Aguarde a regressão à média (o preço retornar para perto da linha Amarela/Azul).
+        4. PACIÊNCIA SNIPER (MEAN REVERSION): Se a foto mostrar o preço esticado longe das médias, NUNCA entre a favor do movimento. Aguarde a regressão à média (o preço retornar para perto da linha Amarela/Azul).
         """
+
+        status_posicao_str = f"ABERTA -> {posicao_aberta['type']} no preço {posicao_aberta['price_open']} (Lucro: {posicao_aberta['profit']})" if posicao_aberta else "NENHUMA (Aguardando nova entrada)"
+        
+        regra_gestao = ""
+        if posicao_aberta:
+            regra_gestao = """
+        [ALERTA MÁXIMO] VOCÊ JÁ ESTÁ POSICIONADO! 
+        Sua ÚNICA função agora é gerenciar a posição atual. É ESTRITAMENTE PROIBIDO analisar novas entradas, configurar armadilhas ou fechar a posição manualmente.
+        A 'decisao' DEVE ser 'HOLD' na grande maioria das vezes.
+        A 'decisao' SÓ DEVE ser 'BREAKEVEN' (colocar Stop Loss no 0 a 0) SE E SOMENTE SE você identificar que o risco de loss é alto porque o movimento está mudando (ex: fazendo topos e fundos maiores ou menores contrários à sua ordem aberta).
+        O objetivo do BREAKEVEN é APENAS ter a chance de não perder essa operação. NUNCA feche a ordem, apenas decida entre HOLD ou BREAKEVEN.
+        A 'ordem_programada' DEVE ser 'NONE'."""
 
         prompt = f"""
         ANÁLISE HÍBRIDA (DADOS + IMAGEM) EM TEMPO REAL.
         Estratégia: {estrategia} | Preço Atual: {preco_atual}
-        STATUS DA POSIÇÃO: {f"ABERTA -> {posicao_aberta['type']} no preço {posicao_aberta['price_open']} (Lucro: {posicao_aberta['profit']})" if posicao_aberta else "NENHUMA (Aguardando nova entrada)"}
+        STATUS DA POSIÇÃO: {status_posicao_str}{regra_gestao}
         
         Status Quant: Tendência M5 {stats.get('direcao_slope_m5')} | Volume {stats.get('volume_status')}
         Direção Micro Imediata M1: {stats.get('direcao_imediata_m1')} (Aceleração: {stats.get('aceleracao_slope_m1')})
